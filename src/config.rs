@@ -124,7 +124,7 @@ fn de_secs<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
 
 fn default_panels() -> Vec<PanelConfig> {
     [
-        "header", "cpu", "mem", "gpu", "disk", "net", "temp", "bat", "vol", "bri",
+        "header", "cpu", "mem", "gpu", "disk", "net", "temp", "top", "bat", "vol", "bri",
     ]
     .iter()
     .map(|k| PanelConfig {
@@ -239,8 +239,12 @@ graph = true
 
 [[panel]]
 type = "temp"
-interval = 5
+interval = 2
 graph = true
+
+[[panel]]
+type = "top"
+interval = 3
 
 [[panel]]
 type = "bat"

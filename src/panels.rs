@@ -4,8 +4,8 @@
 
 use crate::config::{Actions, PanelConfig};
 use crate::metrics::{
-    Cpu, Disk, Net, add_brightness, add_volume, battery, brightness, cpu_temp, disk_usage, gpu,
-    mem_detail, toggle_mute, volume,
+    Cpu, Disk, Net, Top, add_brightness, add_volume, battery, brightness, disk_usage, fan_rpm, gpu,
+    mem_detail, temp_cpu, temp_gpu, temp_ssd, toggle_mute, volume,
 };
 use crate::widgets::{Bar, Graph, Rgba};
 use gtk::prelude::*;
@@ -65,18 +65,8 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
             }
         })),
         "mem" => Some(mem_panel(iv, cfg.graph, smooth)),
-        "temp" => Some(metric_panel(
-            "TEMP",
-            iv,
-            cfg.graph,
-            RED,
-            smooth,
-            Some(100.0),
-            || {
-                let t = cpu_temp();
-                (format!("{t:.0}\u{00b0}"), t)
-            },
-        )),
+        "temp" => Some(temp_panel(iv, cfg.graph, smooth)),
+        "top" => Some(top_panel(iv)),
         "gpu" => Some(gpu_panel(iv, cfg.graph, smooth)),
         "disk" => Some(disk_panel(iv, cfg.graph, smooth)),
         "net" => Some(net_panel(iv, cfg.graph, smooth)),
@@ -446,6 +436,131 @@ fn disk_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         }
         if let Some(g) = &wr {
             g.push(&[w]);
+        }
+    });
+    Panel {
+        root: root.upcast(),
+        interval,
+        update,
+    }
+}
+
+/// TEMP: multiple sensors (cpu/gpu/ssd) as compact mini line-charts + a fan row.
+fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
+    let root = panel_box();
+    let head = Label::new(Some("TEMP"));
+    head.add_css_class("label");
+    head.set_xalign(0.0);
+    root.append(&head);
+
+    let sensors: [(&str, fn() -> Option<f64>, Rgba); 3] = [
+        ("cpu", temp_cpu, RED),
+        ("gpu", temp_gpu, VIOLET),
+        ("ssd", temp_ssd, CYAN),
+    ];
+    let mut rows: Vec<(Option<Graph>, Label, fn() -> Option<f64>)> = Vec::new();
+    for (name, src, color) in sensors {
+        let row = GtkBox::new(Orientation::Horizontal, 4);
+        let lbl = Label::new(Some(name));
+        lbl.add_css_class("sub");
+        lbl.set_xalign(0.0);
+        lbl.set_width_chars(3);
+        let g = graph.then(|| {
+            let g = Graph::new(-1, 12, Some(100.0), 1.0, &[(color, true)], interval, smooth);
+            g.area.set_hexpand(true);
+            g.area.set_valign(gtk::Align::Center);
+            g
+        });
+        let val = Label::new(Some("--"));
+        val.add_css_class("value");
+        val.set_xalign(1.0);
+        val.set_width_chars(4);
+        row.append(&lbl);
+        if let Some(g) = &g {
+            row.append(&g.area);
+        } else {
+            let sp = Label::new(None);
+            sp.set_hexpand(true);
+            row.append(&sp);
+        }
+        row.append(&val);
+        root.append(&row);
+        rows.push((g, val, src));
+    }
+
+    let fanrow = GtkBox::new(Orientation::Horizontal, 4);
+    let fanlbl = Label::new(Some("fan"));
+    fanlbl.add_css_class("sub");
+    fanlbl.set_xalign(0.0);
+    fanlbl.set_hexpand(true);
+    let fanval = Label::new(Some("--"));
+    fanval.add_css_class("value");
+    fanval.set_xalign(1.0);
+    fanrow.append(&fanlbl);
+    fanrow.append(&fanval);
+    root.append(&fanrow);
+
+    let update = Box::new(move || {
+        for (g, val, src) in &rows {
+            match src() {
+                Some(t) => {
+                    val.set_text(&format!("{t:.0}\u{00b0}"));
+                    if let Some(g) = g {
+                        g.push(&[t]);
+                    }
+                }
+                None => val.set_text("--"),
+            }
+        }
+        match fan_rpm() {
+            Some(r) => fanval.set_text(&format!("{r:.0}")),
+            None => fanval.set_text("--"),
+        }
+    });
+    Panel {
+        root: root.upcast(),
+        interval,
+        update,
+    }
+}
+
+/// TOP: the busiest processes by instantaneous CPU %.
+fn top_panel(interval: f64) -> Panel {
+    const N: usize = 5;
+    let root = panel_box();
+    let head = Label::new(Some("TOP"));
+    head.add_css_class("label");
+    head.set_xalign(0.0);
+    root.append(&head);
+
+    let mut rows: Vec<(Label, Label)> = Vec::new();
+    for _ in 0..N {
+        let row = GtkBox::new(Orientation::Horizontal, 4);
+        let name = Label::new(Some(""));
+        name.add_css_class("sub");
+        name.set_xalign(0.0);
+        name.set_hexpand(true);
+        name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let val = Label::new(Some(""));
+        val.add_css_class("value");
+        val.set_xalign(1.0);
+        row.append(&name);
+        row.append(&val);
+        root.append(&row);
+        rows.push((name, val));
+    }
+
+    let top = Rc::new(RefCell::new(Top::new()));
+    let update = Box::new(move || {
+        let list = top.borrow_mut().sample(N);
+        for (i, (name, val)) in rows.iter().enumerate() {
+            if let Some((c, p)) = list.get(i) {
+                name.set_text(c);
+                val.set_text(&format!("{p:.1}"));
+            } else {
+                name.set_text("");
+                val.set_text("");
+            }
         }
     });
     Panel {

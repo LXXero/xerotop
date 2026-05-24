@@ -2,6 +2,7 @@
 //! subprocesses, which is the whole point (the ewwii version forked ~600
 //! shells/sec). Volume uses ALSA; disk usage uses statvfs(3).
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
@@ -72,26 +73,48 @@ pub fn mem_detail() -> (f64, f64) {
     (used / total * 100.0, cache / total * 100.0)
 }
 
-/// CPU temperature in °C from the first preferred hwmon sensor.
-pub fn cpu_temp() -> f64 {
-    const PREFERRED: [&str; 3] = ["k10temp", "coretemp", "zenpower"];
-    let Ok(hwmons) = fs::read_dir("/sys/class/hwmon") else {
-        return 0.0;
-    };
-    let mut paths: Vec<_> = hwmons.flatten().map(|e| e.path()).collect();
+/// First hwmon whose `name` matches one of `names`.
+fn hwmon_named(names: &[&str]) -> Option<std::path::PathBuf> {
+    let mut paths: Vec<_> = fs::read_dir("/sys/class/hwmon")
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
     paths.sort();
-    for want_preferred in [true, false] {
-        for p in &paths {
-            let name = fs::read_to_string(p.join("name")).unwrap_or_default();
-            let is_preferred = PREFERRED.contains(&name.trim());
-            if is_preferred == want_preferred
-                && let Some(t) = read_temp_input(p)
+    paths.into_iter().find(|p| {
+        let n = fs::read_to_string(p.join("name")).unwrap_or_default();
+        names.contains(&n.trim())
+    })
+}
+
+/// Temperature (°C) of the first hwmon matching `names`.
+fn temp_named(names: &[&str]) -> Option<f64> {
+    read_temp_input(&hwmon_named(names)?)
+}
+
+pub fn temp_cpu() -> Option<f64> {
+    temp_named(&["k10temp", "coretemp", "zenpower"])
+}
+pub fn temp_gpu() -> Option<f64> {
+    temp_named(&["amdgpu", "radeon", "nouveau", "nvidia"])
+}
+pub fn temp_ssd() -> Option<f64> {
+    temp_named(&["nvme", "drivetemp"])
+}
+
+/// First nonzero fan speed (RPM) found in hwmon.
+pub fn fan_rpm() -> Option<f64> {
+    for e in fs::read_dir("/sys/class/hwmon").ok()?.flatten() {
+        for i in 1..=8 {
+            if let Ok(s) = fs::read_to_string(e.path().join(format!("fan{i}_input")))
+                && let Ok(v) = s.trim().parse::<f64>()
+                && v > 0.0
             {
-                return t;
+                return Some(v);
             }
         }
     }
-    0.0
+    None
 }
 
 fn read_temp_input(dir: &Path) -> Option<f64> {
@@ -342,5 +365,83 @@ impl Disk {
         } else {
             (0.0, 0.0)
         }
+    }
+}
+
+fn total_jiffies() -> u64 {
+    fs::read_to_string("/proc/stat")
+        .unwrap_or_default()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .split_whitespace()
+        .skip(1)
+        .filter_map(|v| v.parse::<u64>().ok())
+        .sum()
+}
+
+fn num_cpus() -> f64 {
+    let stat = fs::read_to_string("/proc/stat").unwrap_or_default();
+    stat.lines()
+        .filter(|l| l.len() > 3 && l.starts_with("cpu") && l.as_bytes()[3].is_ascii_digit())
+        .count()
+        .max(1) as f64
+}
+
+/// Top processes by instantaneous CPU %, from per-PID /proc deltas (no `ps`).
+pub struct Top {
+    prev: HashMap<i32, u64>, // pid -> utime+stime ticks
+    prev_total: u64,
+    ncpu: f64,
+}
+
+impl Top {
+    pub fn new() -> Self {
+        Self {
+            prev: HashMap::new(),
+            prev_total: total_jiffies(),
+            ncpu: num_cpus(),
+        }
+    }
+
+    /// Returns up to `n` (command, cpu%) pairs, busiest first. 100% = one core.
+    pub fn sample(&mut self, n: usize) -> Vec<(String, f64)> {
+        let total = total_jiffies();
+        let dtotal = total.saturating_sub(self.prev_total).max(1) as f64;
+        self.prev_total = total;
+
+        let mut cur = HashMap::new();
+        let mut list: Vec<(String, f64)> = Vec::new();
+        if let Ok(entries) = fs::read_dir("/proc") {
+            for e in entries.flatten() {
+                let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<i32>().ok()) else {
+                    continue;
+                };
+                let Ok(stat) = fs::read_to_string(e.path().join("stat")) else {
+                    continue;
+                };
+                // comm is parenthesized and may contain spaces/')'
+                let (Some(open), Some(close)) = (stat.find('('), stat.rfind(')')) else {
+                    continue;
+                };
+                let comm = stat[open + 1..close].to_string();
+                let rest: Vec<&str> = stat[close + 1..].split_whitespace().collect();
+                // post-comm fields: utime = field 14 -> index 11, stime = 15 -> 12
+                let utime: u64 = rest.get(11).and_then(|v| v.parse().ok()).unwrap_or(0);
+                let stime: u64 = rest.get(12).and_then(|v| v.parse().ok()).unwrap_or(0);
+                let ticks = utime + stime;
+                cur.insert(pid, ticks);
+                if let Some(&p) = self.prev.get(&pid) {
+                    let dt = ticks.saturating_sub(p) as f64;
+                    if dt > 0.0 {
+                        list.push((comm, dt / dtotal * 100.0 * self.ncpu));
+                    }
+                }
+            }
+        }
+        self.prev = cur;
+        list.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        list.truncate(n);
+        list
     }
 }
