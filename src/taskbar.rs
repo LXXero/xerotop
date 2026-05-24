@@ -22,6 +22,13 @@ pub struct Toplevel {
     pub title: String,
     pub app_id: String,
     pub activated: bool,
+    pub minimized: bool,
+}
+
+/// Click actions sent from the GTK thread back to the wayland thread.
+pub enum Action {
+    Activate(u64),
+    ToggleMinimize(u64),
 }
 
 struct State {
@@ -49,15 +56,31 @@ impl State {
             h.activate(seat);
         }
     }
+
+    fn toggle_minimize(&self, id: u64) {
+        let Some(h) = self.handles.get(&id) else {
+            return;
+        };
+        let minimized = self
+            .toplevels
+            .values()
+            .find(|t| t.id == id)
+            .is_some_and(|t| t.minimized);
+        if minimized {
+            h.unset_minimized();
+        } else {
+            h.set_minimized();
+        }
+    }
 }
 
 /// Spawn the wayland listener; returns (snapshot receiver, activate sender).
 pub fn spawn() -> (
     async_channel::Receiver<Vec<Toplevel>>,
-    calloop::channel::Sender<u64>,
+    calloop::channel::Sender<Action>,
 ) {
     let (tx, rx) = async_channel::unbounded();
-    let (atx, achan) = calloop::channel::channel::<u64>();
+    let (atx, achan) = calloop::channel::channel::<Action>();
     std::thread::spawn(move || {
         if let Err(e) = run(tx, achan) {
             eprintln!("xerotop: taskbar wayland thread exited: {e}");
@@ -68,7 +91,7 @@ pub fn spawn() -> (
 
 fn run(
     tx: async_channel::Sender<Vec<Toplevel>>,
-    achan: calloop::channel::Channel<u64>,
+    achan: calloop::channel::Channel<Action>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let conn = Connection::connect_to_env()?;
     let (globals, queue) = registry_queue_init::<State>(&conn)?;
@@ -92,8 +115,11 @@ fn run(
         .map_err(|_| "failed to insert wayland source")?;
     handle
         .insert_source(achan, |event, _, state| {
-            if let calloop::channel::Event::Msg(id) = event {
-                state.activate(id);
+            if let calloop::channel::Event::Msg(action) = event {
+                match action {
+                    Action::Activate(id) => state.activate(id),
+                    Action::ToggleMinimize(id) => state.toggle_minimize(id),
+                }
             }
         })
         .map_err(|_| "failed to insert activate channel")?;
@@ -176,12 +202,13 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
                 }
             }
             handle::Event::State { state } => {
-                let activated = state
+                let vals: Vec<u32> = state
                     .chunks_exact(4)
                     .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
-                    .any(|v| v == handle::State::Activated as u32);
+                    .collect();
                 if let Some(t) = this.toplevels.get_mut(&oid) {
-                    t.activated = activated;
+                    t.activated = vals.contains(&(handle::State::Activated as u32));
+                    t.minimized = vals.contains(&(handle::State::Minimized as u32));
                 }
             }
             handle::Event::Done => {

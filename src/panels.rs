@@ -11,6 +11,9 @@ use crate::widgets::{Bar, Graph, Rgba};
 use gtk::prelude::*;
 use gtk::{Box as GtkBox, Label, Orientation};
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 pub struct Panel {
@@ -446,6 +449,108 @@ fn disk_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     }
 }
 
+/// Resolve a window's app_id to an icon: try the icon theme, then match a
+/// .desktop file's `Icon=` (like ewwii's app_icon script). Cached per app_id.
+fn resolve_icon(app_id: &str) -> Option<gtk::Image> {
+    if app_id.is_empty() {
+        return None;
+    }
+    thread_local! {
+        static CACHE: RefCell<HashMap<String, Option<String>>> = RefCell::new(HashMap::new());
+    }
+    let name = CACHE.with(|c| {
+        if let Some(v) = c.borrow().get(app_id) {
+            return v.clone();
+        }
+        let resolved = compute_icon_name(app_id);
+        c.borrow_mut().insert(app_id.to_string(), resolved.clone());
+        resolved
+    })?;
+    if name.starts_with('/') {
+        Some(gtk::Image::from_file(name))
+    } else {
+        Some(gtk::Image::from_icon_name(&name))
+    }
+}
+
+fn compute_icon_name(app_id: &str) -> Option<String> {
+    let lower = app_id.to_lowercase();
+    let tail = app_id.rsplit('.').next().unwrap_or(app_id).to_lowercase();
+    if let Some(display) = gtk::gdk::Display::default() {
+        let theme = gtk::IconTheme::for_display(&display);
+        for cand in [app_id, &lower, &tail] {
+            if theme.has_icon(cand) {
+                return Some(cand.to_string());
+            }
+        }
+    }
+    desktop_icon(&lower, &tail)
+}
+
+fn desktop_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(home) = std::env::var("HOME") {
+        dirs.push(PathBuf::from(home).join(".local/share/applications"));
+    }
+    let xdg =
+        std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+    for d in xdg.split(':') {
+        dirs.push(PathBuf::from(d).join("applications"));
+    }
+    dirs
+}
+
+/// Find a .desktop file matching `want`/`tail` and return its Icon=. Exact
+/// matches (filename stem / StartupWMClass) first, then fuzzy, to avoid
+/// grabbing the wrong handler (see ewwii ONBOARDING gotcha #15).
+fn desktop_icon(want: &str, tail: &str) -> Option<String> {
+    let dirs = desktop_dirs();
+    for fuzzy in [false, true] {
+        for dir in &dirs {
+            let Ok(rd) = fs::read_dir(dir) else {
+                continue;
+            };
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.extension().and_then(|x| x.to_str()) != Some("desktop") {
+                    continue;
+                }
+                let stem = p
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                let Ok(content) = fs::read_to_string(&p) else {
+                    continue;
+                };
+                let mut icon = None;
+                let mut wmclass = None;
+                for line in content.lines() {
+                    if let Some(v) = line.strip_prefix("Icon=") {
+                        if icon.is_none() {
+                            icon = Some(v.trim().to_string());
+                        }
+                    } else if let Some(v) = line.strip_prefix("StartupWMClass=") {
+                        wmclass = Some(v.trim().to_lowercase());
+                    }
+                }
+                let hit = if fuzzy {
+                    stem.contains(want) || stem.contains(tail)
+                } else {
+                    stem == want
+                        || stem == tail
+                        || wmclass.as_deref() == Some(want)
+                        || wmclass.as_deref() == Some(tail)
+                };
+                if hit && let Some(i) = icon {
+                    return Some(i);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Taskbar: open windows via wlr-foreign-toplevel, rebuilt on each snapshot
 /// streamed from the wayland listener thread.
 fn taskbar_panel() -> Panel {
@@ -468,8 +573,7 @@ fn taskbar_panel() -> Panel {
             }
             for t in tops {
                 let row = GtkBox::new(Orientation::Horizontal, 4);
-                if !t.app_id.is_empty() {
-                    let img = gtk::Image::from_icon_name(&t.app_id);
+                if let Some(img) = resolve_icon(&t.app_id) {
                     img.set_pixel_size(16);
                     row.append(&img);
                 }
@@ -491,11 +595,22 @@ fn taskbar_panel() -> Panel {
                     btn.add_css_class("task-active");
                 }
                 btn.set_child(Some(&row));
-                let atx = atx.clone();
                 let id = t.id;
-                btn.connect_clicked(move |_| {
-                    let _ = atx.send(id); // ask the wayland thread to activate it
-                });
+                {
+                    let atx = atx.clone();
+                    btn.connect_clicked(move |_| {
+                        let _ = atx.send(crate::taskbar::Action::Activate(id));
+                    });
+                }
+                {
+                    let atx = atx.clone();
+                    let right = gtk::GestureClick::new();
+                    right.set_button(3); // right-click toggles minimize
+                    right.connect_pressed(move |_, _, _, _| {
+                        let _ = atx.send(crate::taskbar::Action::ToggleMinimize(id));
+                    });
+                    btn.add_controller(right);
+                }
                 list2.append(&btn);
             }
         }
