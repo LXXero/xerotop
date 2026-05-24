@@ -1,10 +1,16 @@
-/* xerotop — skeleton theme. CSS-driven so theme packs are possible later. */
+/* xerotop — theme. Base font matches ewwii (FiraCode Nerd Font Mono) so the
+   Nerd-Font glyphs (battery/volume/brightness/power/lock) render everywhere. */
 .bar {
+    font-family: "FiraCode Nerd Font Mono", monospace;
+    font-size: 12px;
     background-color: rgba(16, 16, 20, 0.88);
     padding: 6px;
 }
 .panel {
     padding: 2px 4px;
+}
+.meter {
+    padding: 1px 4px;
 }
 .rule {
     background-color: rgba(255, 255, 255, 0.12);
@@ -13,14 +19,15 @@
     margin: 2px 0;
 }
 .label {
-    font-family: monospace;
-    font-size: 11px;
+    font-weight: bold;
     color: #99aabb;
 }
 .value {
-    font-family: monospace;
-    font-size: 11px;
     color: #ccddee;
+}
+.meter-icon {
+    color: #aabbcc;
+    font-size: 13px;
 }
 .graph {
     background-color: rgba(0, 0, 0, 0.25);
@@ -29,9 +36,17 @@
     background-color: rgba(0, 0, 0, 0.25);
 }
 .sub {
-    font-family: monospace;
     font-size: 9px;
     color: #667788;
+}
+.clock-time {
+    font-weight: bold;
+    font-size: 18px;
+    color: #eeeeff;
+}
+.clock-date {
+    font-size: 10px;
+    color: #8899aa;
 }
 .hbtn {
     background: transparent;
@@ -42,6 +57,7 @@
     min-width: 0;
     padding: 0 4px;
     color: #99aabb;
+    font-size: 14px;
 }
 .hbtn:hover {
     color: #eeeeff;
@@ -58,14 +74,4 @@
 }
 .menu-item:hover {
     background-color: rgba(255, 255, 255, 0.10);
-}
-.clock-time {
-    font-family: monospace;
-    font-size: 18px;
-    color: #eeeeff;
-}
-.clock-date {
-    font-family: monospace;
-    font-size: 10px;
-    color: #8899aa;
 }

@@ -66,42 +66,55 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
         "disk" => Some(disk_panel(iv, cfg.graph, smooth)),
         "net" => Some(net_panel(iv, cfg.graph, smooth)),
         "bat" | "battery" => Some(bar_panel(
-            "BAT",
             iv,
             RED,
             || match battery() {
                 Some((p, status)) => {
-                    let arrow = match status.as_str() {
-                        "Charging" => " \u{2191}",
-                        "Discharging" => " \u{2193}",
-                        _ => "",
+                    let icon = if status == "Charging" {
+                        "\u{f0e7}" // charging bolt
+                    } else if p >= 90.0 {
+                        "\u{f240}" // full
+                    } else if p >= 70.0 {
+                        "\u{f241}" // 3/4
+                    } else if p >= 40.0 {
+                        "\u{f242}" // half
+                    } else if p >= 15.0 {
+                        "\u{f243}" // 1/4
+                    } else {
+                        "\u{f244}" // empty
                     };
-                    (format!("{p:.0}%{arrow}"), p)
+                    (icon.to_string(), format!("{p:.0}%"), p)
                 }
-                None => ("AC".to_string(), 0.0),
+                None => ("\u{f1e6}".to_string(), "AC".to_string(), 100.0), // plug
             },
             None,
             None,
         )),
         "vol" | "volume" => Some(bar_panel(
-            "VOL",
             iv,
             GREEN,
             || match volume() {
-                Some((_, true)) => ("MUTE".to_string(), 0.0),
-                Some((p, false)) => (format!("{p:.0}%"), p),
-                None => ("--".to_string(), 0.0),
+                Some((p, muted)) => {
+                    let icon = if muted || p <= 0.0 {
+                        "\u{f026}" // muted
+                    } else if p < 50.0 {
+                        "\u{f027}" // low
+                    } else {
+                        "\u{f028}" // high
+                    };
+                    (icon.to_string(), format!("{p:.0}%"), p)
+                }
+                None => ("\u{f028}".to_string(), "--".to_string(), 0.0),
             },
             Some(Box::new(|d| add_volume(d * 5.0))),
             Some(Box::new(toggle_mute)),
         )),
         "bri" | "brightness" => Some(bar_panel(
-            "BRI",
             iv,
             AMBER,
             || match brightness() {
-                Some(p) => (format!("{p:.0}%"), p),
-                None => ("--".to_string(), 0.0),
+                Some(p) => ("\u{f185}".to_string(), format!("{p:.0}%"), p), // sun
+                None => ("\u{f185}".to_string(), "--".to_string(), 0.0),
             },
             Some(Box::new(|d| add_brightness(d * 5.0))),
             None,
@@ -223,10 +236,11 @@ fn mem_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     }
 }
 
-/// Slim single-row meter: NAME · thin inline bar · value. Optional scroll/click
-/// control (volume, brightness). One row instead of label-over-full-width-bar.
+/// Slim single-row meter: icon · thin inline bar · value. The icon and value
+/// come from the sampler `(icon, value, pct)`. The value label is fixed-width
+/// (room for "100%") and the bar hexpands, so bars stay the same length and the
+/// % column never shifts. Optional scroll/click control (volume, brightness).
 fn bar_panel<F>(
-    name: &str,
     interval: f64,
     rgba: Rgba,
     sampler: F,
@@ -234,29 +248,33 @@ fn bar_panel<F>(
     on_click: Option<Box<dyn Fn()>>,
 ) -> Panel
 where
-    F: Fn() -> (String, f64) + 'static,
+    F: Fn() -> (String, String, f64) + 'static,
 {
     let row = GtkBox::new(Orientation::Horizontal, 4);
     row.add_css_class("panel");
     row.add_css_class("meter");
-    let lbl = Label::new(Some(name));
-    lbl.add_css_class("label");
-    lbl.set_xalign(0.0);
+    let icon = Label::new(None);
+    icon.add_css_class("meter-icon");
+    icon.set_width_chars(2);
+    icon.set_xalign(0.5);
     let bar = Bar::new(-1, BAR_H, 100.0, rgba);
     bar.area.set_hexpand(true);
     bar.area.set_valign(gtk::Align::Center);
     let val = Label::new(Some("--"));
     val.add_css_class("value");
+    val.set_width_chars(4); // fixed column: "100%" fits, bars stay equal length
     val.set_xalign(1.0);
-    row.append(&lbl);
+    row.append(&icon);
     row.append(&bar.area);
     row.append(&val);
 
     let refresh: Rc<dyn Fn()> = Rc::new({
+        let icon = icon.clone();
         let val = val.clone();
         let bar = bar.clone();
         move || {
-            let (text, pct) = sampler();
+            let (ic, text, pct) = sampler();
+            icon.set_text(&ic);
             val.set_text(&text);
             bar.set(pct);
         }
@@ -421,7 +439,7 @@ fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Act
 
     // power menu button → popover with logout/reboot/shutdown
     let power = gtk::MenuButton::new();
-    power.set_label("\u{23FB}");
+    power.set_label("\u{f011}"); // power-off glyph
     power.add_css_class("hbtn");
     let pop = gtk::Popover::new();
     let menu = GtkBox::new(Orientation::Vertical, 2);
@@ -445,7 +463,7 @@ fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Act
 
     // lock button
     let lock = gtk::Button::new();
-    lock.set_label("\u{1f512}");
+    lock.set_label("\u{f023}"); // lock glyph
     lock.add_css_class("hbtn");
     let lock_cmd = actions.lock.clone();
     lock.connect_clicked(move |_| spawn(&lock_cmd));
