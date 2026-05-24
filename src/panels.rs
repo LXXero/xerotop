@@ -594,6 +594,9 @@ fn taskbar_panel() -> Panel {
                 if t.activated {
                     btn.add_css_class("task-active");
                 }
+                if t.minimized {
+                    btn.add_css_class("task-min");
+                }
                 btn.set_child(Some(&row));
                 let id = t.id;
                 {
@@ -765,6 +768,7 @@ fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Act
     let power = gtk::Button::new();
     power.set_label("\u{f011}"); // power-off glyph
     power.add_css_class("hbtn");
+    power.add_css_class("power");
     let pop = gtk::Popover::new();
     let menu = GtkBox::new(Orientation::Vertical, 2);
     menu.add_css_class("menu");

@@ -56,6 +56,10 @@
     background-color: rgba(255, 255, 255, 0.10);
     color: #eeeeff;
 }
+.task-min {
+    color: #5f6b78; /* dimmed */
+    font-style: italic;
+}
 .clock-time {
     font-weight: bold;
     font-size: 18px;
@@ -84,6 +88,12 @@
 }
 .lock:hover {
     color: #ffd966;
+}
+.power {
+    color: #5fd75f; /* green */
+}
+.power:hover {
+    color: #8bffa0;
 }
 .menu {
     padding: 4px;
