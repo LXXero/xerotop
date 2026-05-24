@@ -3,7 +3,7 @@
 //! scheduler calls when the panel is due. No per-panel timers.
 
 use crate::config::PanelConfig;
-use crate::metrics::{Cpu, Net, cpu_temp, mem_percent};
+use crate::metrics::{Cpu, Net, battery, cpu_temp, mem_percent};
 use crate::widgets::Graph;
 use gtk::prelude::*;
 use gtk::{Box as GtkBox, Label, Orientation};
@@ -44,6 +44,7 @@ pub fn build(cfg: &PanelConfig) -> Option<Panel> {
             (format!("{t:.0}\u{00b0}"), t)
         })),
         "net" => Some(net_panel(interval, cfg.graph)),
+        "bat" | "battery" => Some(battery_panel(interval, cfg.graph)),
         other => {
             eprintln!("xerotop: unknown panel type '{other}', skipping");
             None
@@ -125,6 +126,47 @@ fn net_panel(interval: u32, graph: bool) -> Panel {
         val.set_text(&format!("\u{2193}{down:.0} \u{2191}{up:.0}"));
         if let Some(g) = &graph_widget {
             g.push(down);
+        }
+    });
+
+    Panel {
+        root: root.upcast(),
+        interval,
+        update,
+    }
+}
+
+fn battery_panel(interval: u32, graph: bool) -> Panel {
+    let root = GtkBox::new(Orientation::Vertical, 2);
+    root.add_css_class("panel");
+    let (row, val) = header("BAT");
+    root.append(&row);
+
+    let graph_widget = if graph {
+        let g = Graph::new(60, GRAPH_W, GRAPH_H, Some(100.0), GREEN);
+        root.append(&g.area);
+        Some(g)
+    } else {
+        None
+    };
+
+    let update = Box::new(move || match battery() {
+        Some((pct, status)) => {
+            let sym = match status.as_str() {
+                "Charging" => " \u{2191}",
+                "Discharging" => " \u{2193}",
+                _ => "",
+            };
+            val.set_text(&format!("{pct:.0}%{sym}"));
+            if let Some(g) = &graph_widget {
+                g.push(pct);
+            }
+        }
+        None => {
+            val.set_text("AC");
+            if let Some(g) = &graph_widget {
+                g.push(0.0);
+            }
         }
     });
 

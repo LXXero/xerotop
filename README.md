@@ -25,11 +25,12 @@ that spawned ~600 shell processes per second to poll metrics. xerotop reads
 
 ## Status — walking skeleton
 
-Working: layer-shell bar (any edge), native CPU / MEM / NET meters with graphs, a
-clock, TOML config with first-run defaults, and battery-aware interval scaling.
+Working: layer-shell bar (any edge), native **CPU / MEM / NET / TEMP / BATTERY**
+meters with graphs, a clock, TOML config with first-run defaults, and a single
+battery-aware scheduler.
 
-Planned: system tray (StatusNotifier), taskbar (wlr-foreign-toplevel), temp/disk/
-battery panels, theme packs, occlusion-aware pausing, multi-bar.
+Planned: system tray (StatusNotifier), taskbar (wlr-foreign-toplevel), disk panel,
+theme packs, occlusion-aware pausing, multi-bar.
 
 ## Build & run
 
@@ -74,7 +75,7 @@ graph = true
 |---|---|
 | `config.rs`  | TOML schema + load/defaults |
 | `power.rs`   | AC/battery detection (`/sys/class/power_supply`) |
-| `metrics.rs` | native `/proc` & `/sys` samplers (cpu, mem, net) |
+| `metrics.rs` | native `/proc` & `/sys` samplers (cpu, mem, net, temp, battery) |
 | `widgets.rs` | reusable ring-buffer `Graph` (redraws on push only) |
 | `panels.rs`  | `Panel` builders (root widget + interval + update closure) |
 | `bar.rs`     | layer-shell window + central battery-aware scheduler |

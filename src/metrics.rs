@@ -86,6 +86,31 @@ pub fn cpu_temp() -> f64 {
     0.0
 }
 
+/// (percent, status) of the first BAT* supply, if any (None on desktops).
+pub fn battery() -> Option<(f64, String)> {
+    let entries = fs::read_dir("/sys/class/power_supply").ok()?;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if fs::read_to_string(p.join("type"))
+            .unwrap_or_default()
+            .trim()
+            == "Battery"
+        {
+            let cap = fs::read_to_string(p.join("capacity"))
+                .ok()?
+                .trim()
+                .parse::<f64>()
+                .ok()?;
+            let status = fs::read_to_string(p.join("status"))
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            return Some((cap, status));
+        }
+    }
+    None
+}
+
 fn read_temp_input(dir: &Path) -> Option<f64> {
     for i in 1..=8 {
         if let Ok(s) = fs::read_to_string(dir.join(format!("temp{i}_input")))
