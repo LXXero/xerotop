@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use system_tray::client::{ActivateRequest, Client, Event, UpdateEvent};
 use system_tray::item::{IconPixmap, StatusNotifierItem};
-use system_tray::menu::{MenuType, TrayMenu};
+use system_tray::menu::{MenuItem, MenuType, TrayMenu};
 
 #[derive(Clone)]
 pub struct MenuEntry {
@@ -14,6 +14,7 @@ pub struct MenuEntry {
     pub label: String,
     pub enabled: bool,
     pub separator: bool,
+    pub children: Vec<MenuEntry>,
 }
 
 #[derive(Clone, Default)]
@@ -38,8 +39,8 @@ fn best_pixmap(pix: Option<&Vec<IconPixmap>>) -> Option<(i32, i32, Vec<u8>)> {
     Some((p.width, p.height, p.pixels.clone()))
 }
 
-fn flatten(menu: &TrayMenu) -> Vec<MenuEntry> {
-    menu.submenus
+fn build_entries(items: &[MenuItem]) -> Vec<MenuEntry> {
+    items
         .iter()
         .filter(|m| m.visible)
         .map(|m| MenuEntry {
@@ -47,8 +48,13 @@ fn flatten(menu: &TrayMenu) -> Vec<MenuEntry> {
             label: m.label.clone().unwrap_or_default(),
             enabled: m.enabled,
             separator: matches!(m.menu_type, MenuType::Separator),
+            children: build_entries(&m.submenu),
         })
         .collect()
+}
+
+fn menu_entries(menu: &TrayMenu) -> Vec<MenuEntry> {
+    build_entries(&menu.submenus)
 }
 
 fn to_item(addr: &str, item: &StatusNotifierItem) -> TrayItem {
@@ -110,7 +116,7 @@ async fn run(
             for (addr, (item, menu)) in guard.iter() {
                 let mut it = to_item(addr, item);
                 if let Some(m) = menu {
-                    it.menu = flatten(m);
+                    it.menu = menu_entries(m);
                 }
                 items.insert(addr.clone(), it);
             }
@@ -133,7 +139,7 @@ async fn run(
                                     it.pixmap = best_pixmap(icon_pixmap.as_ref());
                                 }
                                 UpdateEvent::Title(t) => it.title = t.unwrap_or_default(),
-                                UpdateEvent::Menu(menu) => it.menu = flatten(&menu),
+                                UpdateEvent::Menu(menu) => it.menu = menu_entries(&menu),
                                 _ => {}
                             }
                         }

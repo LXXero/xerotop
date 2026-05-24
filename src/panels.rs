@@ -592,6 +592,57 @@ fn pixmap_texture(w: i32, h: i32, argb: &[u8]) -> Option<gtk::gdk::Texture> {
     Some(tex.upcast())
 }
 
+/// Build a GMenu (+ backing actions) from the DBus menu tree: nested submenus,
+/// separators become sections, items map to `tray.iN` actions that send a click.
+fn build_menu_model(
+    entries: &[crate::tray::MenuEntry],
+    group: &gtk::gio::SimpleActionGroup,
+    atx: &Rc<async_channel::Sender<crate::tray::TrayAction>>,
+    addr: &str,
+    menu_path: &str,
+) -> gtk::gio::Menu {
+    use gtk::gio;
+    let menu = gio::Menu::new();
+    let mut section = gio::Menu::new();
+    for e in entries {
+        if e.separator {
+            if section.n_items() > 0 {
+                menu.append_section(None, &section);
+                section = gio::Menu::new();
+            }
+            continue;
+        }
+        if e.children.is_empty() {
+            let action_name = format!("i{}", e.id);
+            let action = gio::SimpleAction::new(&action_name, None);
+            action.set_enabled(e.enabled);
+            let atx = atx.clone();
+            let addr = addr.to_string();
+            let mp = menu_path.to_string();
+            let id = e.id;
+            action.connect_activate(move |_, _| {
+                let _ = atx.try_send(crate::tray::TrayAction::MenuClick(
+                    addr.clone(),
+                    mp.clone(),
+                    id,
+                ));
+            });
+            group.add_action(&action);
+            section.append_item(&gio::MenuItem::new(
+                Some(&e.label),
+                Some(&format!("tray.{action_name}")),
+            ));
+        } else {
+            let sub = build_menu_model(&e.children, group, atx, addr, menu_path);
+            section.append_submenu(Some(&e.label), &sub);
+        }
+    }
+    if section.n_items() > 0 {
+        menu.append_section(None, &section);
+    }
+    menu
+}
+
 /// System tray: StatusNotifier items as clickable icons (left-click activates).
 fn tray_panel() -> Panel {
     let root = panel_box();
@@ -627,7 +678,7 @@ fn tray_panel() -> Panel {
                     });
                 }
 
-                // right-click: DBus menu popover
+                // right-click: native PopoverMenu built from the DBus menu tree
                 if it.menu_path.is_some() && !it.menu.is_empty() {
                     let atx = atx.clone();
                     let addr = it.id.clone();
@@ -640,37 +691,11 @@ fn tray_panel() -> Panel {
                         let Some(anchor) = btn_weak.upgrade() else {
                             return;
                         };
-                        let pop = gtk::Popover::new();
+                        let group = gtk::gio::SimpleActionGroup::new();
+                        let model = build_menu_model(&entries, &group, &atx, &addr, &menu_path);
+                        let pop = gtk::PopoverMenu::from_model(Some(&model));
+                        pop.insert_action_group("tray", Some(&group));
                         pop.set_position(gtk::PositionType::Left);
-                        let mbox = GtkBox::new(Orientation::Vertical, 1);
-                        mbox.add_css_class("menu");
-                        for e in &entries {
-                            if e.separator {
-                                let rule = GtkBox::new(Orientation::Horizontal, 0);
-                                rule.add_css_class("rule");
-                                rule.set_size_request(-1, 1);
-                                mbox.append(&rule);
-                                continue;
-                            }
-                            let mi = gtk::Button::with_label(&e.label);
-                            mi.add_css_class("menu-item");
-                            mi.set_sensitive(e.enabled);
-                            let atx = atx.clone();
-                            let addr = addr.clone();
-                            let mp = menu_path.clone();
-                            let id = e.id;
-                            let pop2 = pop.clone();
-                            mi.connect_clicked(move |_| {
-                                let _ = atx.try_send(crate::tray::TrayAction::MenuClick(
-                                    addr.clone(),
-                                    mp.clone(),
-                                    id,
-                                ));
-                                pop2.popdown();
-                            });
-                            mbox.append(&mi);
-                        }
-                        pop.set_child(Some(&mbox));
                         pop.set_parent(&anchor);
                         pop.connect_closed(|p| p.unparent());
                         pop.popup();
