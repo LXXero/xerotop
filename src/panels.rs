@@ -4,7 +4,8 @@
 
 use crate::config::PanelConfig;
 use crate::metrics::{
-    Cpu, Disk, Net, battery, brightness, cpu_temp, disk_usage, gpu, mem_detail, volume,
+    Cpu, Disk, Net, add_brightness, add_volume, battery, brightness, cpu_temp, disk_usage, gpu,
+    mem_detail, toggle_mute, volume,
 };
 use crate::widgets::{Bar, Graph, Rgba};
 use gtk::prelude::*;
@@ -55,26 +56,47 @@ pub fn build(cfg: &PanelConfig, smooth: bool) -> Option<Panel> {
         "gpu" => Some(gpu_panel(iv, cfg.graph, smooth)),
         "disk" => Some(disk_panel(iv, cfg.graph, smooth)),
         "net" => Some(net_panel(iv, cfg.graph, smooth)),
-        "bat" | "battery" => Some(bar_panel("BAT", iv, RED, || match battery() {
-            Some((p, status)) => {
-                let arrow = match status.as_str() {
-                    "Charging" => " \u{2191}",
-                    "Discharging" => " \u{2193}",
-                    _ => "",
-                };
-                (format!("{p:.0}%{arrow}"), p)
-            }
-            None => ("AC".to_string(), 0.0),
-        })),
-        "vol" | "volume" => Some(bar_panel("VOL", iv, GREEN, || match volume() {
-            Some((_, true)) => ("MUTE".to_string(), 0.0),
-            Some((p, false)) => (format!("{p:.0}%"), p),
-            None => ("--".to_string(), 0.0),
-        })),
-        "bri" | "brightness" => Some(bar_panel("BRI", iv, AMBER, || match brightness() {
-            Some(p) => (format!("{p:.0}%"), p),
-            None => ("--".to_string(), 0.0),
-        })),
+        "bat" | "battery" => Some(bar_panel(
+            "BAT",
+            iv,
+            RED,
+            || match battery() {
+                Some((p, status)) => {
+                    let arrow = match status.as_str() {
+                        "Charging" => " \u{2191}",
+                        "Discharging" => " \u{2193}",
+                        _ => "",
+                    };
+                    (format!("{p:.0}%{arrow}"), p)
+                }
+                None => ("AC".to_string(), 0.0),
+            },
+            None,
+            None,
+        )),
+        "vol" | "volume" => Some(bar_panel(
+            "VOL",
+            iv,
+            GREEN,
+            || match volume() {
+                Some((_, true)) => ("MUTE".to_string(), 0.0),
+                Some((p, false)) => (format!("{p:.0}%"), p),
+                None => ("--".to_string(), 0.0),
+            },
+            Some(Box::new(|d| add_volume(d * 5.0))),
+            Some(Box::new(toggle_mute)),
+        )),
+        "bri" | "brightness" => Some(bar_panel(
+            "BRI",
+            iv,
+            AMBER,
+            || match brightness() {
+                Some(p) => (format!("{p:.0}%"), p),
+                None => ("--".to_string(), 0.0),
+            },
+            Some(Box::new(|d| add_brightness(d * 5.0))),
+            None,
+        )),
         other => {
             eprintln!("xerotop: unknown panel type '{other}', skipping");
             None
@@ -192,23 +214,69 @@ fn mem_panel(interval: u32, graph: bool, smooth: bool) -> Panel {
     }
 }
 
-/// Single-level fill bar (battery, volume, brightness).
-fn bar_panel<F>(name: &str, interval: u32, rgba: Rgba, sampler: F) -> Panel
+/// Slim single-row meter: NAME · thin inline bar · value. Optional scroll/click
+/// control (volume, brightness). One row instead of label-over-full-width-bar.
+fn bar_panel<F>(
+    name: &str,
+    interval: u32,
+    rgba: Rgba,
+    sampler: F,
+    on_scroll: Option<Box<dyn Fn(f64)>>,
+    on_click: Option<Box<dyn Fn()>>,
+) -> Panel
 where
     F: Fn() -> (String, f64) + 'static,
 {
-    let root = panel_box();
-    let (row, val) = header(name);
-    root.append(&row);
-    let bar = Bar::new(GRAPH_W, BAR_H, 100.0, rgba);
-    root.append(&bar.area);
-    let update = Box::new(move || {
-        let (text, pct) = sampler();
-        val.set_text(&text);
-        bar.set(pct);
+    let row = GtkBox::new(Orientation::Horizontal, 4);
+    row.add_css_class("panel");
+    row.add_css_class("meter");
+    let lbl = Label::new(Some(name));
+    lbl.add_css_class("label");
+    lbl.set_xalign(0.0);
+    let bar = Bar::new(-1, BAR_H, 100.0, rgba);
+    bar.area.set_hexpand(true);
+    bar.area.set_valign(gtk::Align::Center);
+    let val = Label::new(Some("--"));
+    val.add_css_class("value");
+    val.set_xalign(1.0);
+    row.append(&lbl);
+    row.append(&bar.area);
+    row.append(&val);
+
+    let refresh: Rc<dyn Fn()> = Rc::new({
+        let val = val.clone();
+        let bar = bar.clone();
+        move || {
+            let (text, pct) = sampler();
+            val.set_text(&text);
+            bar.set(pct);
+        }
     });
+
+    if let Some(scroll) = on_scroll {
+        let ec = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+        let refresh = refresh.clone();
+        ec.connect_scroll(move |_, _, dy| {
+            scroll(if dy < 0.0 { 1.0 } else { -1.0 });
+            refresh();
+            gtk::glib::Propagation::Stop
+        });
+        row.add_controller(ec);
+    }
+    if let Some(click) = on_click {
+        let gc = gtk::GestureClick::new();
+        let refresh = refresh.clone();
+        gc.connect_released(move |_, _, _, _| {
+            click();
+            refresh();
+        });
+        row.add_controller(gc);
+    }
+
+    let upd = refresh.clone();
+    let update = Box::new(move || upd());
     Panel {
-        root: root.upcast(),
+        root: row.upcast(),
         interval,
         update,
     }

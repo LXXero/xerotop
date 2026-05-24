@@ -169,6 +169,59 @@ pub fn volume() -> Option<(f64, bool)> {
     Some((pct, muted))
 }
 
+/// Adjust ALSA Master volume by `delta_pct` (e.g. +5.0 / -5.0). Native, no subprocess.
+pub fn add_volume(delta_pct: f64) {
+    use alsa::mixer::{Mixer, SelemChannelId, SelemId};
+    let Ok(mixer) = Mixer::new("default", false) else {
+        return;
+    };
+    let Some(selem) = mixer.find_selem(&SelemId::new("Master", 0)) else {
+        return;
+    };
+    let (min, max) = selem.get_playback_volume_range();
+    let cur = selem
+        .get_playback_volume(SelemChannelId::FrontLeft)
+        .unwrap_or(min);
+    let span = (max - min) as f64;
+    let new = ((cur as f64 + delta_pct / 100.0 * span).round() as i64).clamp(min, max);
+    let _ = selem.set_playback_volume_all(new);
+}
+
+/// Toggle ALSA Master mute.
+pub fn toggle_mute() {
+    use alsa::mixer::{Mixer, SelemChannelId, SelemId};
+    let Ok(mixer) = Mixer::new("default", false) else {
+        return;
+    };
+    let Some(selem) = mixer.find_selem(&SelemId::new("Master", 0)) else {
+        return;
+    };
+    let on = selem
+        .get_playback_switch(SelemChannelId::FrontLeft)
+        .unwrap_or(1);
+    let _ = selem.set_playback_switch_all(i32::from(on == 0));
+}
+
+/// Adjust backlight by `delta_pct`. Writes /sys directly (needs `video`-group /
+/// udev write access; otherwise a no-op).
+pub fn add_brightness(delta_pct: f64) {
+    let Some(dir) = fs::read_dir("/sys/class/backlight")
+        .ok()
+        .and_then(|mut e| e.next())
+        .and_then(|e| e.ok())
+        .map(|e| e.path())
+    else {
+        return;
+    };
+    let max = read_u64(&dir.join("max_brightness")) as f64;
+    let cur = read_u64(&dir.join("brightness")) as f64;
+    if max <= 0.0 {
+        return;
+    }
+    let new = (cur + delta_pct / 100.0 * max).clamp(0.0, max).round() as u64;
+    let _ = fs::write(dir.join("brightness"), new.to_string());
+}
+
 /// (busy %, vram used GB, vram total GB) from the first GPU exposing busy %.
 pub fn gpu() -> Option<(f64, f64, f64)> {
     let entries = fs::read_dir("/sys/class/drm").ok()?;
