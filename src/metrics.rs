@@ -391,6 +391,7 @@ fn num_cpus() -> f64 {
 /// Top processes by instantaneous CPU %, from per-PID /proc deltas (no `ps`).
 pub struct Top {
     prev: HashMap<i32, u64>, // pid -> utime+stime ticks
+    ema: HashMap<i32, f64>,  // pid -> smoothed cpu %
     prev_total: u64,
     ncpu: f64,
 }
@@ -399,18 +400,23 @@ impl Top {
     pub fn new() -> Self {
         Self {
             prev: HashMap::new(),
+            ema: HashMap::new(),
             prev_total: total_jiffies(),
             ncpu: num_cpus(),
         }
     }
 
     /// Returns up to `n` (command, cpu%) pairs, busiest first. 100% = one core.
+    /// Values are exponentially smoothed so the list doesn't jump every sample.
     pub fn sample(&mut self, n: usize) -> Vec<(String, f64)> {
+        const ALPHA: f64 = 0.3; // lower = smoother/calmer
+
         let total = total_jiffies();
         let dtotal = total.saturating_sub(self.prev_total).max(1) as f64;
         self.prev_total = total;
 
         let mut cur = HashMap::new();
+        let mut ema = HashMap::new();
         let mut list: Vec<(String, f64)> = Vec::new();
         if let Ok(entries) = fs::read_dir("/proc") {
             for e in entries.flatten() {
@@ -430,16 +436,20 @@ impl Top {
                 let utime: u64 = rest.get(11).and_then(|v| v.parse().ok()).unwrap_or(0);
                 let stime: u64 = rest.get(12).and_then(|v| v.parse().ok()).unwrap_or(0);
                 let ticks = utime + stime;
-                cur.insert(pid, ticks);
+                // include every process seen last round (even idle ones) so their
+                // smoothed value decays gracefully instead of vanishing.
                 if let Some(&p) = self.prev.get(&pid) {
-                    let dt = ticks.saturating_sub(p) as f64;
-                    if dt > 0.0 {
-                        list.push((comm, dt / dtotal * 100.0 * self.ncpu));
-                    }
+                    let inst = ticks.saturating_sub(p) as f64 / dtotal * 100.0 * self.ncpu;
+                    let prev_e = self.ema.get(&pid).copied().unwrap_or(inst);
+                    let e = ALPHA * inst + (1.0 - ALPHA) * prev_e;
+                    ema.insert(pid, e);
+                    list.push((comm, e));
                 }
+                cur.insert(pid, ticks);
             }
         }
         self.prev = cur;
+        self.ema = ema;
         list.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         list.truncate(n);
         list
