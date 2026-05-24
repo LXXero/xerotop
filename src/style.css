@@ -57,8 +57,10 @@
     color: #eeeeff;
 }
 .task-min {
-    color: #5f6b78; /* dimmed */
+    color: #6b7785; /* dimmed */
     font-style: italic;
+    background-color: rgba(255, 255, 255, 0.05); /* faint faded highlight */
+    border-radius: 4px;
 }
 .clock-time {
     font-weight: bold;
