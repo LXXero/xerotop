@@ -85,6 +85,7 @@ impl Graph {
             for se in ss.iter() {
                 let (r, g, b, a) = se.rgba;
                 if se.fill {
+                    // filled area (closed down to the baseline)
                     cr.move_to(xof(0), h);
                     for i in 0..n {
                         cr.line_to(xof(i), yof(se.buf[i]));
@@ -92,19 +93,17 @@ impl Graph {
                     cr.line_to(xof(n - 1), h);
                     cr.close_path();
                     cr.set_source_rgba(r, g, b, a * 0.35);
-                    let _ = cr.fill_preserve();
-                    cr.set_source_rgba(r, g, b, a);
-                    cr.set_line_width(1.0);
-                    let _ = cr.stroke();
-                } else {
-                    cr.move_to(xof(0), yof(se.buf[0]));
-                    for i in 1..n {
-                        cr.line_to(xof(i), yof(se.buf[i]));
-                    }
-                    cr.set_source_rgba(r, g, b, a);
-                    cr.set_line_width(1.0);
-                    let _ = cr.stroke();
+                    let _ = cr.fill();
                 }
+                // top curve only — never the closing verticals/baseline, so no
+                // stray vertical line scrolls down the right edge.
+                cr.move_to(xof(0), yof(se.buf[0]));
+                for i in 1..n {
+                    cr.line_to(xof(i), yof(se.buf[i]));
+                }
+                cr.set_source_rgba(r, g, b, a);
+                cr.set_line_width(1.0);
+                let _ = cr.stroke();
             }
         });
 

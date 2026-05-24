@@ -8,8 +8,9 @@ use crate::power;
 use gtk::prelude::*;
 use gtk::{Application, ApplicationWindow, Box as GtkBox, Orientation, glib};
 use gtk4_layer_shell::{Edge as LsEdge, Layer, LayerShell};
-use std::cell::Cell;
+use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 pub fn build(app: &Application, cfg: &Config) {
     let window = ApplicationWindow::builder().application(app).build();
@@ -71,7 +72,7 @@ pub fn build(app: &Application, cfg: &Config) {
 
     let mut panels: Vec<Panel> = Vec::new();
     for (i, pcfg) in cfg.panel.iter().enumerate() {
-        if let Some(panel) = panels::build(pcfg, cfg.bar.smooth) {
+        if let Some(panel) = panels::build(pcfg, cfg.bar.smooth, &cfg.actions) {
             if i > 0 {
                 let rule = GtkBox::new(Orientation::Horizontal, 0);
                 rule.add_css_class("rule");
@@ -88,18 +89,20 @@ pub fn build(app: &Application, cfg: &Config) {
         (p.update)();
     }
 
-    // Single central scheduler.
+    // Single central scheduler: a 250 ms base tick updates each panel when its
+    // (possibly fractional) interval has elapsed, stretched by the battery
+    // multiplier on battery.
     let panels = Rc::new(panels);
     let mult = cfg.power.battery_interval_multiplier.max(1.0);
-    let tick = Rc::new(Cell::new(0u64));
-    glib::timeout_add_seconds_local(1, move || {
-        let t = tick.get() + 1;
-        tick.set(t);
+    let last = Rc::new(RefCell::new(vec![Instant::now(); panels.len()]));
+    glib::timeout_add_local(Duration::from_millis(250), move || {
         let m = if power::on_battery() { mult } else { 1.0 };
-        for p in panels.iter() {
-            let eff = ((p.interval as f64) * m).round().max(1.0) as u64;
-            if t % eff == 0 {
+        let now = Instant::now();
+        let mut last = last.borrow_mut();
+        for (i, p) in panels.iter().enumerate() {
+            if now.duration_since(last[i]).as_secs_f64() >= p.interval * m {
                 (p.update)();
+                last[i] = now;
             }
         }
         glib::ControlFlow::Continue

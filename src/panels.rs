@@ -2,7 +2,7 @@
 //! widget, a base update interval (seconds), and an `update` closure the central
 //! scheduler calls when the panel is due. No per-panel timers.
 
-use crate::config::PanelConfig;
+use crate::config::{Actions, PanelConfig};
 use crate::metrics::{
     Cpu, Disk, Net, add_brightness, add_volume, battery, brightness, cpu_temp, disk_usage, gpu,
     mem_detail, toggle_mute, volume,
@@ -15,7 +15,7 @@ use std::rc::Rc;
 
 pub struct Panel {
     pub root: gtk::Widget,
-    pub interval: u32,
+    pub interval: f64,
     pub update: Box<dyn Fn()>,
 }
 
@@ -33,12 +33,21 @@ const VIOLET: Rgba = (0.78, 0.55, 1.0, 0.9);
 const PALE: Rgba = (0.70, 0.92, 1.0, 0.85); // MEM cache overlay line
 
 /// Build a panel from its config, or None for an unknown type.
-pub fn build(cfg: &PanelConfig, smooth: bool) -> Option<Panel> {
-    let iv = cfg.interval.max(1);
+pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel> {
+    let iv = cfg.interval.max(0.1);
+    let clock_fmts = || {
+        (
+            cfg.time_format.clone().unwrap_or_else(|| "%I:%M %p".into()),
+            cfg.date_format.clone().unwrap_or_else(|| "%a %d %b".into()),
+        )
+    };
     match cfg.kind.as_str() {
+        "header" => {
+            let (tf, df) = clock_fmts();
+            Some(header_panel(iv, tf, df, actions))
+        }
         "clock" => {
-            let tf = cfg.time_format.clone().unwrap_or_else(|| "%I:%M %p".into());
-            let df = cfg.date_format.clone().unwrap_or_else(|| "%a %d %b".into());
+            let (tf, df) = clock_fmts();
             Some(clock_panel(iv, tf, df))
         }
         "cpu" => Some(metric_panel("CPU", iv, cfg.graph, GREEN, smooth, {
@@ -136,12 +145,12 @@ fn graph_widget(
     h: i32,
     specs: &[(Rgba, bool)],
     fixed: Option<f64>,
-    iv: u32,
+    iv: f64,
     smooth: bool,
     graph: bool,
 ) -> Option<Graph> {
     graph.then(|| {
-        let g = Graph::new(GRAPH_W, h, fixed, GAMMA, specs, iv as f64, smooth);
+        let g = Graph::new(GRAPH_W, h, fixed, GAMMA, specs, iv, smooth);
         root.append(&g.area);
         g
     })
@@ -150,7 +159,7 @@ fn graph_widget(
 /// 0..100 single-series filled metric (cpu, temp).
 fn metric_panel<F>(
     name: &str,
-    interval: u32,
+    interval: f64,
     graph: bool,
     rgba: Rgba,
     smooth: bool,
@@ -187,7 +196,7 @@ where
 
 /// MEM: filled "used" plus an overlay line at used+cache (so cache/buffers shows
 /// as the band between fill and line).
-fn mem_panel(interval: u32, graph: bool, smooth: bool) -> Panel {
+fn mem_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     let root = panel_box();
     let (row, val) = header("MEM");
     root.append(&row);
@@ -218,7 +227,7 @@ fn mem_panel(interval: u32, graph: bool, smooth: bool) -> Panel {
 /// control (volume, brightness). One row instead of label-over-full-width-bar.
 fn bar_panel<F>(
     name: &str,
-    interval: u32,
+    interval: f64,
     rgba: Rgba,
     sampler: F,
     on_scroll: Option<Box<dyn Fn(f64)>>,
@@ -282,7 +291,7 @@ where
     }
 }
 
-fn net_panel(interval: u32, graph: bool, smooth: bool) -> Panel {
+fn net_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     let root = panel_box();
     let (row, val) = header("NET");
     root.append(&row);
@@ -322,7 +331,7 @@ fn net_panel(interval: u32, graph: bool, smooth: bool) -> Panel {
     }
 }
 
-fn gpu_panel(interval: u32, graph: bool, smooth: bool) -> Panel {
+fn gpu_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     let root = panel_box();
     let (row, val) = header("GPU");
     root.append(&row);
@@ -354,7 +363,7 @@ fn gpu_panel(interval: u32, graph: bool, smooth: bool) -> Panel {
     }
 }
 
-fn disk_panel(interval: u32, graph: bool, smooth: bool) -> Panel {
+fn disk_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     let root = panel_box();
     let (row, val) = header("DISK");
     root.append(&row);
@@ -399,7 +408,80 @@ fn disk_panel(interval: u32, graph: bool, smooth: bool) -> Panel {
     }
 }
 
-fn clock_panel(interval: u32, time_fmt: String, date_fmt: String) -> Panel {
+fn spawn(cmd: &str) {
+    let _ = std::process::Command::new("sh").arg("-c").arg(cmd).spawn();
+}
+
+/// Header: power menu (left) · clock (center) · lock (right), with date below.
+fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Actions) -> Panel {
+    let root = panel_box();
+    root.add_css_class("clock");
+
+    let top = gtk::CenterBox::new();
+
+    // power menu button → popover with logout/reboot/shutdown
+    let power = gtk::MenuButton::new();
+    power.set_label("\u{23FB}");
+    power.add_css_class("hbtn");
+    let pop = gtk::Popover::new();
+    let menu = GtkBox::new(Orientation::Vertical, 2);
+    menu.add_css_class("menu");
+    for (label, cmd) in [
+        ("Logout", actions.logout.clone()),
+        ("Reboot", actions.reboot.clone()),
+        ("Shutdown", actions.shutdown.clone()),
+    ] {
+        let item = gtk::Button::with_label(label);
+        item.add_css_class("menu-item");
+        let pop = pop.clone();
+        item.connect_clicked(move |_| {
+            spawn(&cmd);
+            pop.popdown();
+        });
+        menu.append(&item);
+    }
+    pop.set_child(Some(&menu));
+    power.set_popover(Some(&pop));
+
+    // lock button
+    let lock = gtk::Button::new();
+    lock.set_label("\u{1f512}");
+    lock.add_css_class("hbtn");
+    let lock_cmd = actions.lock.clone();
+    lock.connect_clicked(move |_| spawn(&lock_cmd));
+
+    let time = Label::new(Some("--:--"));
+    time.add_css_class("clock-time");
+
+    top.set_start_widget(Some(&power));
+    top.set_center_widget(Some(&time));
+    top.set_end_widget(Some(&lock));
+
+    let date = Label::new(Some(""));
+    date.add_css_class("clock-date");
+    date.set_halign(gtk::Align::Center);
+
+    root.append(&top);
+    root.append(&date);
+
+    let update = Box::new(move || {
+        if let Ok(now) = gtk::glib::DateTime::now_local() {
+            if let Ok(t) = now.format(&time_fmt) {
+                time.set_text(t.trim_start());
+            }
+            if let Ok(d) = now.format(&date_fmt) {
+                date.set_text(&d);
+            }
+        }
+    });
+    Panel {
+        root: root.upcast(),
+        interval,
+        update,
+    }
+}
+
+fn clock_panel(interval: f64, time_fmt: String, date_fmt: String) -> Panel {
     let root = panel_box();
     root.add_css_class("clock");
     let time = Label::new(Some("--:--"));

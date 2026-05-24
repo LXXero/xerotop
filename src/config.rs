@@ -60,12 +60,33 @@ impl Default for PowerConfig {
     }
 }
 
+/// Shell commands run by the header buttons (one-shot, on click — not polled).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct Actions {
+    pub lock: String,
+    pub logout: String,
+    pub reboot: String,
+    pub shutdown: String,
+}
+
+impl Default for Actions {
+    fn default() -> Self {
+        Self {
+            lock: "loginctl lock-session".into(),
+            logout: "loginctl terminate-session \"$XDG_SESSION_ID\"".into(),
+            reboot: "systemctl reboot".into(),
+            shutdown: "systemctl poweroff".into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PanelConfig {
     #[serde(rename = "type")]
     pub kind: String,
-    #[serde(default = "default_interval")]
-    pub interval: u32,
+    #[serde(default = "default_interval", deserialize_with = "de_secs")]
+    pub interval: f64,
     #[serde(default = "default_true")]
     pub graph: bool,
     /// clock only: strftime time/date formats (defaults give 12-hour AM/PM).
@@ -75,21 +96,36 @@ pub struct PanelConfig {
     pub date_format: Option<String>,
 }
 
-fn default_interval() -> u32 {
-    1
+fn default_interval() -> f64 {
+    1.0
 }
 fn default_true() -> bool {
     true
 }
 
+/// Accept either an integer or float for interval seconds.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Num {
+    Int(i64),
+    Float(f64),
+}
+
+fn de_secs<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    Ok(match Num::deserialize(d)? {
+        Num::Int(i) => i as f64,
+        Num::Float(f) => f,
+    })
+}
+
 fn default_panels() -> Vec<PanelConfig> {
     [
-        "clock", "cpu", "mem", "gpu", "disk", "net", "temp", "bat", "vol", "bri",
+        "header", "cpu", "mem", "gpu", "disk", "net", "temp", "bat", "vol", "bri",
     ]
     .iter()
     .map(|k| PanelConfig {
         kind: (*k).to_string(),
-        interval: 1,
+        interval: 1.0,
         graph: true,
         time_format: None,
         date_format: None,
@@ -103,6 +139,8 @@ pub struct Config {
     pub bar: BarConfig,
     #[serde(default)]
     pub power: PowerConfig,
+    #[serde(default)]
+    pub actions: Actions,
     #[serde(default = "default_panels")]
     pub panel: Vec<PanelConfig>,
 }
@@ -112,6 +150,7 @@ impl Default for Config {
         Self {
             bar: BarConfig::default(),
             power: PowerConfig::default(),
+            actions: Actions::default(),
             panel: default_panels(),
         }
     }
@@ -153,36 +192,44 @@ smooth = true       # continuous graph scrolling; false = stepped (less battery)
 # On battery, multiply every panel's update interval by this (saves wakeups).
 battery_interval_multiplier = 2.0
 
+# Header buttons run these on click (one-shot, not polled).
+[actions]
+lock = "loginctl lock-session"
+logout = "loginctl terminate-session \"$XDG_SESSION_ID\""
+reboot = "systemctl reboot"
+shutdown = "systemctl poweroff"
+
 # Panels render top-to-bottom (vertical) or left-to-right (horizontal).
+# interval is seconds and may be fractional (e.g. 0.5 = 2 samples/sec).
 [[panel]]
-type = "clock"
+type = "header"            # power button | clock | lock button
 interval = 1
 time_format = "%I:%M %p"   # 12-hour AM/PM; use "%H:%M" for 24-hour
 date_format = "%a %d %b"
 
 [[panel]]
 type = "cpu"
-interval = 1
+interval = 0.5
 graph = true
 
 [[panel]]
 type = "mem"
-interval = 2
+interval = 1
 graph = true
 
 [[panel]]
 type = "gpu"
-interval = 2
+interval = 0.5
 graph = true
 
 [[panel]]
 type = "disk"
-interval = 2
+interval = 0.5
 graph = true
 
 [[panel]]
 type = "net"
-interval = 1
+interval = 0.5
 graph = true
 
 [[panel]]
@@ -196,9 +243,9 @@ interval = 10
 
 [[panel]]
 type = "vol"
-interval = 2
+interval = 1
 
 [[panel]]
 type = "bri"
-interval = 2
+interval = 1
 "#;

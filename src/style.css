@@ -33,6 +33,32 @@
     font-size: 9px;
     color: #667788;
 }
+.hbtn {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    outline: none;
+    min-height: 0;
+    min-width: 0;
+    padding: 0 4px;
+    color: #99aabb;
+}
+.hbtn:hover {
+    color: #eeeeff;
+}
+.menu {
+    padding: 4px;
+}
+.menu-item {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: #ccddee;
+    padding: 4px 14px;
+}
+.menu-item:hover {
+    background-color: rgba(255, 255, 255, 0.10);
+}
 .clock-time {
     font-family: monospace;
     font-size: 18px;
