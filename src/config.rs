@@ -214,7 +214,7 @@ date_format = "%a %d %b"
 
 [[panel]]
 type = "cpu"
-interval = 0.5
+interval = 2
 graph = true
 
 [[panel]]
@@ -224,17 +224,17 @@ graph = true
 
 [[panel]]
 type = "gpu"
-interval = 0.5
+interval = 2
 graph = true
 
 [[panel]]
 type = "disk"
-interval = 0.5
+interval = 2
 graph = true
 
 [[panel]]
 type = "net"
-interval = 0.5
+interval = 2
 graph = true
 
 [[panel]]
