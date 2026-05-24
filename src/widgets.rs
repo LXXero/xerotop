@@ -15,7 +15,7 @@ use std::time::Instant;
 
 pub type Rgba = (f64, f64, f64, f64);
 
-const HISTORY: usize = 64; // samples retained per series
+const WINDOW_SECS: f64 = 60.0; // graph spans ~60s regardless of sample interval
 
 struct Series {
     buf: VecDeque<f64>,
@@ -47,10 +47,13 @@ impl Graph {
         area.set_content_width(w);
         area.set_content_height(h);
 
+        // Sample count tracks a ~60s window so the graph spans the same wall-clock
+        // time at any interval (and fills in ~60s, not 128s at a 2s interval).
+        let len = ((WINDOW_SECS / interval_s.max(0.05)).round() as usize).clamp(8, 512);
         let series: Vec<Series> = specs
             .iter()
             .map(|(rgba, fill)| Series {
-                buf: VecDeque::from(vec![0.0; HISTORY]),
+                buf: VecDeque::from(vec![0.0; len]),
                 rgba: *rgba,
                 fill: *fill,
             })
