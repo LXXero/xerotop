@@ -70,6 +70,7 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
         "gpu" => Some(gpu_panel(iv, cfg.graph, smooth)),
         "disk" => Some(disk_panel(iv, cfg.graph, smooth)),
         "net" => Some(net_panel(iv, cfg.graph, smooth)),
+        "win" | "taskbar" => Some(taskbar_panel()),
         "bat" | "battery" => Some(bar_panel(
             iv,
             RED,
@@ -442,6 +443,48 @@ fn disk_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         root: root.upcast(),
         interval,
         update,
+    }
+}
+
+/// Taskbar: open windows via wlr-foreign-toplevel, rebuilt on each snapshot
+/// streamed from the wayland listener thread.
+fn taskbar_panel() -> Panel {
+    let root = panel_box();
+    root.add_css_class("taskbar");
+    let head = Label::new(Some("WIN"));
+    head.add_css_class("label");
+    head.set_xalign(0.0);
+    root.append(&head);
+    let list = GtkBox::new(Orientation::Vertical, 1);
+    root.append(&list);
+
+    let rx = crate::taskbar::spawn();
+    let list2 = list.clone();
+    gtk::glib::spawn_future_local(async move {
+        while let Ok(tops) = rx.recv().await {
+            while let Some(child) = list2.first_child() {
+                list2.remove(&child);
+            }
+            for t in tops {
+                let text = if t.title.is_empty() {
+                    t.app_id
+                } else {
+                    t.title
+                };
+                let l = Label::new(Some(&text));
+                l.add_css_class(if t.activated { "task-active" } else { "task" });
+                l.set_xalign(0.0);
+                l.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                l.set_max_width_chars(1); // ellipsize within the bar width
+                list2.append(&l);
+            }
+        }
+    });
+
+    Panel {
+        root: root.upcast(),
+        interval: 3600.0,
+        update: Box::new(|| {}),
     }
 }
 

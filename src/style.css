@@ -39,6 +39,17 @@
     font-size: 9px;
     color: #667788;
 }
+.task {
+    font-size: 11px;
+    color: #99aabb;
+    padding: 1px 2px;
+}
+.task-active {
+    font-size: 11px;
+    color: #eeeeff;
+    background-color: rgba(255, 255, 255, 0.10);
+    padding: 1px 2px;
+}
 .clock-time {
     font-weight: bold;
     font-size: 18px;

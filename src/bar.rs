@@ -14,6 +14,21 @@ use std::time::{Duration, Instant};
 
 pub fn build(app: &Application, cfg: &Config) {
     panels::set_gamma(cfg.bar.graph_gamma);
+
+    // Opacity override (higher priority than the base stylesheet's .bar rule).
+    if let Some(display) = gtk::gdk::Display::default() {
+        let provider = gtk::CssProvider::new();
+        provider.load_from_data(&format!(
+            ".bar {{ background-color: rgba(16,16,20,{:.3}); }}",
+            cfg.bar.opacity.clamp(0.0, 1.0)
+        ));
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_USER,
+        );
+    }
+
     let window = ApplicationWindow::builder().application(app).build();
 
     window.init_layer_shell();

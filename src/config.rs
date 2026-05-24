@@ -35,6 +35,8 @@ pub struct BarConfig {
     /// Spikiness of autoscaled graphs (cpu/gpu/net/disk): >1 sharpens peaks and
     /// deepens valleys, 1.0 = linear. Fixed meters (mem/temp) ignore this.
     pub graph_gamma: f64,
+    /// Background opacity 0.0 (transparent) .. 1.0 (opaque).
+    pub opacity: f64,
 }
 
 impl Default for BarConfig {
@@ -45,6 +47,7 @@ impl Default for BarConfig {
             monitor: 0,
             smooth: true,
             graph_gamma: 1.4,
+            opacity: 0.88,
         }
     }
 }
@@ -124,7 +127,7 @@ fn de_secs<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
 
 fn default_panels() -> Vec<PanelConfig> {
     [
-        "header", "cpu", "mem", "gpu", "disk", "net", "temp", "bat", "vol", "bri", "top",
+        "header", "cpu", "mem", "gpu", "disk", "net", "temp", "bat", "vol", "bri", "top", "win",
     ]
     .iter()
     .map(|k| PanelConfig {
@@ -192,6 +195,7 @@ thickness = 150     # px: width for vertical bars, height for horizontal
 monitor = 0
 smooth = true       # continuous graph scrolling; false = stepped (less battery)
 graph_gamma = 1.4   # autoscaled-graph spikiness; >1 sharper peaks, 1.0 = linear
+opacity = 0.88      # background opacity: 0.0 transparent .. 1.0 opaque
 
 [power]
 # On battery, multiply every panel's update interval by this (saves wakeups).
@@ -257,4 +261,7 @@ interval = 1
 [[panel]]
 type = "top"
 interval = 3
+
+[[panel]]
+type = "win"        # taskbar (open windows via wlr-foreign-toplevel)
 "#;
