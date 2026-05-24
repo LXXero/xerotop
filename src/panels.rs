@@ -445,6 +445,8 @@ fn disk_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     }
 }
 
+type TempSrc = fn() -> Option<f64>;
+
 /// TEMP: multiple sensors (cpu/gpu/ssd) as compact mini line-charts + a fan row.
 fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     let root = panel_box();
@@ -453,12 +455,12 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     head.set_xalign(0.0);
     root.append(&head);
 
-    let sensors: [(&str, fn() -> Option<f64>, Rgba); 3] = [
+    let sensors: [(&str, TempSrc, Rgba); 3] = [
         ("cpu", temp_cpu, RED),
         ("gpu", temp_gpu, VIOLET),
         ("ssd", temp_ssd, CYAN),
     ];
-    let mut rows: Vec<(Option<Graph>, Label, fn() -> Option<f64>)> = Vec::new();
+    let mut rows: Vec<(Option<Graph>, Label, TempSrc)> = Vec::new();
     for (name, src, color) in sensors {
         let row = GtkBox::new(Orientation::Horizontal, 4);
         let lbl = Label::new(Some(name));
