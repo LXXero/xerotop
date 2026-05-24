@@ -691,6 +691,11 @@ fn tray_panel() -> Panel {
                         let Some(anchor) = btn_weak.upgrade() else {
                             return;
                         };
+                        // ask the app to refresh its menu (DBusMenu AboutToShow)
+                        let _ = atx.try_send(crate::tray::TrayAction::AboutToShow(
+                            addr.clone(),
+                            menu_path.clone(),
+                        ));
                         let group = gtk::gio::SimpleActionGroup::new();
                         let model = build_menu_model(&entries, &group, &atx, &addr, &menu_path);
                         let pop = gtk::PopoverMenu::from_model(Some(&model));

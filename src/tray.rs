@@ -32,6 +32,7 @@ pub struct TrayItem {
 pub enum TrayAction {
     Activate(String),               // address (left-click)
     MenuClick(String, String, i32), // address, menu_path, submenu_id
+    AboutToShow(String, String),    // address, menu_path — refresh before showing
 }
 
 fn best_pixmap(pix: Option<&Vec<IconPixmap>>) -> Option<(i32, i32, Vec<u8>)> {
@@ -130,6 +131,12 @@ async fn run(
                 match ev {
                     Ok(Event::Add(addr, item)) => {
                         items.insert(addr.clone(), to_item(&addr, &item));
+                        // Poke AboutToShow(root) so apps that build their menu
+                        // lazily populate it now; the refreshed layout comes back
+                        // as a later UpdateEvent::Menu.
+                        if let Some(mp) = item.menu.clone() {
+                            let _ = client.about_to_show_menuitem(addr.clone(), mp, 0).await;
+                        }
                     }
                     Ok(Event::Update(addr, update)) => {
                         if let Some(it) = items.get_mut(&addr) {
@@ -161,6 +168,9 @@ async fn run(
                         let _ = client
                             .activate(ActivateRequest::MenuItem { address, menu_path, submenu_id })
                             .await;
+                    }
+                    Ok(TrayAction::AboutToShow(address, menu_path)) => {
+                        let _ = client.about_to_show_menuitem(address, menu_path, 0).await;
                     }
                     Err(_) => break,
                 }
