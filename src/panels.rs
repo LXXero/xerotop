@@ -23,7 +23,6 @@ const GRAPH_W: i32 = 134;
 const GRAPH_H: i32 = 24;
 const MINI_H: i32 = 14;
 const BAR_H: i32 = 10;
-const GAMMA: f64 = 0.5; // lift low values so charts stay lively (ewwii feel)
 
 const GREEN: Rgba = (0.40, 1.0, 0.40, 0.9);
 const CYAN: Rgba = (0.40, 0.8, 1.0, 0.9);
@@ -176,7 +175,11 @@ fn graph_widget(
     graph: bool,
 ) -> Option<Graph> {
     graph.then(|| {
-        let g = Graph::new(GRAPH_W, h, fixed, GAMMA, specs, iv, smooth);
+        // Autoscaled graphs (cpu/gpu/net/disk) use gamma > 1 to deepen valleys
+        // and sharpen peaks (ewwii-like spikiness); fixed-scale meters (mem/temp)
+        // stay linear so the fill reflects the true level.
+        let gamma = if fixed.is_some() { 1.0 } else { 1.6 };
+        let g = Graph::new(GRAPH_W, h, fixed, gamma, specs, iv, smooth);
         root.append(&g.area);
         g
     })
