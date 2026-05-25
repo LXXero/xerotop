@@ -73,10 +73,13 @@ impl BarHandle {
         let monitor = target_monitor(&cfg);
         // Pin to the configured output if requested; monitor < 0 = compositor's
         // choice (but we still use the first output's geometry for full length).
+        // Clear any previous pin on the auto path so it actually unpins live.
         if cfg.bar.monitor >= 0
             && let Some(m) = &monitor
         {
             self.window.set_monitor(Some(m));
+        } else {
+            self.window.set_monitor(None);
         }
 
         let edge = cfg.bar.edge;
@@ -169,6 +172,7 @@ pub fn build(app: &Application, cfg: Config) -> BarHandle {
     window.init_layer_shell();
     window.set_layer(Layer::Top);
     window.set_namespace(Some("xerotop"));
+    window.add_css_class("xerotop"); // scopes the transparent-window rule to us
     // Size to exactly our request every time. A resizable window remembers the
     // largest size it ever had, so reducing thickness wouldn't shrink it back.
     window.set_resizable(false);

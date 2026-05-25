@@ -105,10 +105,11 @@ impl Theme {
         let bright = lighten(&self.foreground, 0.3);
         format!(
             r#"
-/* The toplevel window must be transparent, or our semi-transparent .bar fill
+/* The bar window must be transparent, or our semi-transparent .bar fill
    composites over GTK's opaque window background (looks grey) instead of the
-   desktop showing through. */
-window {{ background-color: transparent; }}
+   desktop showing through. Scoped to .xerotop so the prefs window (same display,
+   shares this provider) stays opaque. */
+window.xerotop {{ background-color: transparent; }}
 .bar {{ font-family: "{font}", monospace; font-size: 12px; background-color: {bar_bg}; padding: 6px; }}
 .panel {{ padding: 0 4px; }}
 .meter {{ padding: 1px 4px; }}
@@ -149,6 +150,14 @@ window {{ background-color: transparent; }}
     }
 }
 
+/// A theme name is a strict slug so it can't escape the themes dir (e.g. `../`).
+pub fn is_valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
 pub fn themes_dir() -> PathBuf {
     crate::config::config_path()
         .parent()
@@ -160,6 +169,10 @@ pub fn themes_dir() -> PathBuf {
 /// `themes/<name>.toml`, falling back to the built-in on any error.
 pub fn resolve(name: &str) -> Theme {
     if name.is_empty() || name == "default" {
+        return Theme::default();
+    }
+    if !is_valid_name(name) {
+        eprintln!("xerotop: invalid theme name '{name}'; using default");
         return Theme::default();
     }
     let path = themes_dir().join(format!("{name}.toml"));

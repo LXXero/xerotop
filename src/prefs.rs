@@ -390,13 +390,20 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
 
     // Loading a theme: resolve the file, swap it in, refresh every widget.
     let h = handle.clone();
-    let names_c = names.clone();
     let buttons_c = buttons.clone();
     let font_c = font_btn.clone();
     let ld = loading.clone();
     selector.connect_selected_notify(move |d| {
-        let name = &names_c[d.selected() as usize];
-        let t = crate::theme::resolve(name);
+        // Read the name from the model object, not a captured Vec — the model is
+        // rebuilt on "Save theme as…", so a stale index could panic.
+        let Some(name) = d
+            .selected_item()
+            .and_downcast::<gtk::StringObject>()
+            .map(|o| o.string().to_string())
+        else {
+            return;
+        };
+        let t = crate::theme::resolve(&name);
         h.cfg.borrow_mut().theme = name.clone();
         ld.set(true);
         font_c.set_font_desc(&FontDescription::from_string(&t.font_family));
@@ -422,7 +429,11 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
     let selector_c = selector.clone();
     save_theme.connect_clicked(move |_| {
         let name = entry_c.text().trim().to_string();
-        if name.is_empty() || name == "default" {
+        // Reject "default" and anything that isn't a strict slug (path-safe).
+        if name == "default" || !crate::theme::is_valid_name(&name) {
+            entry_c.set_text("");
+            entry_c
+                .set_placeholder_text(Some("use letters, digits, - or _ (not 'default')"));
             return;
         }
         if let Err(e) = save_theme_file(&name, &h.theme.borrow()) {

@@ -688,6 +688,22 @@ fn resolve_menu_id(store: &MenuStore, addr: &str, path: &[usize]) -> Option<i32>
     last
 }
 
+/// The freshest menu entries to render at `path` (top level if empty, else the
+/// children of the node at that path) from the latest layout snapshot. Lets
+/// menus reflect lazily-populated content after AboutToShow, not stale captures.
+fn resolve_menu_entries(
+    store: &MenuStore,
+    addr: &str,
+    path: &[usize],
+) -> Option<Vec<crate::tray::MenuEntry>> {
+    let map = store.borrow();
+    let mut nodes: &[crate::tray::MenuEntry] = map.get(addr)?;
+    for &idx in path {
+        nodes = &nodes.get(idx)?.children;
+    }
+    Some(nodes.to_vec())
+}
+
 /// Build a custom cascading menu Popover from the DBus menu tree. Plain widgets
 /// with direct click handlers (no GAction muxer), left-aligned, with submenus
 /// that open on hover (and click). Clicks/opens resolve the item's *current* id
@@ -791,8 +807,12 @@ fn make_menu_popover(
                     mp_c.clone(),
                     sid,
                 ));
+                // Freshest children for this submenu, not the tree captured when
+                // this level was built (lazily-populated submenus).
+                let fresh = resolve_menu_entries(&store_c, &addr_c, &ipath)
+                    .unwrap_or_else(|| children.clone());
                 let child = make_menu_popover(
-                    &children,
+                    &fresh,
                     &atx_c,
                     &addr_c,
                     &mp_c,
@@ -953,8 +973,12 @@ fn tray_panel() -> Panel {
                             }
                         })
                     };
+                    // Render from the freshest layout snapshot, not the tree
+                    // captured at panel-build time (apps populate menus lazily).
+                    let fresh =
+                        resolve_menu_entries(&store_g, &addr, &[]).unwrap_or_else(|| entries.clone());
                     let pop = make_menu_popover(
-                        &entries,
+                        &fresh,
                         &atx,
                         &addr,
                         &menu_path,

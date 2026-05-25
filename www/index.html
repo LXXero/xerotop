@@ -102,7 +102,8 @@
   <h2>design principles</h2>
   <ul>
     <li><span class="bright">battery-first.</span> one scheduler, one timer; on battery every interval
-        stretches by a configurable multiplier. graphs redraw only on a new sample, never on a frame clock.</li>
+        stretches by a configurable multiplier. with stepped graphs there are no extra wakeups; the default
+        smooth scrolling animates via a frame clock (toggle it off for minimal wakeups).</li>
     <li><span class="bright">single process.</span> metrics, taskbar (wlr-foreign-toplevel) and tray
         (StatusNotifier) — no IPC, no sockets, no helper daemons.</li>
     <li><span class="bright">worse-is-better.</span> the smallest thing that genuinely works, then iterate.</li>
@@ -111,12 +112,13 @@
     <li><span class="bright">orientation-agnostic.</span> vertical and horizontal bars share one layout model.</li>
   </ul>
 
-  <h2>status — walking skeleton</h2>
+  <h2>status — feature-complete</h2>
   <ul>
-    <li>layer-shell bar on any edge</li>
-    <li>native CPU / MEM / NET / TEMP / BATTERY meters with graphs</li>
-    <li>clock, TOML config with first-run defaults, one battery-aware scheduler</li>
-    <li class="no">planned: tray, taskbar, disk panel, theme packs, occlusion-aware pausing, multi-bar</li>
+    <li>layer-shell bar on any edge, configurable thickness / length / opacity</li>
+    <li>native CPU / MEM / GPU / DISK / NET / TEMP+fan / BATTERY / VOLUME / BRIGHTNESS meters, TOP process list</li>
+    <li>taskbar (wlr-foreign-toplevel) and system tray (StatusNotifier) with cascading menus</li>
+    <li>live preferences GUI (right-click the bar or <span class="bright">--prefs</span>) and a themes system</li>
+    <li class="no">planned: occlusion-aware pausing, multiple bars, horizontal-mode polish</li>
   </ul>
 
   <h2>build &amp; run</h2>

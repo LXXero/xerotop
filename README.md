@@ -14,8 +14,10 @@ that spawned ~600 shell processes per second to poll metrics. xerotop reads
 
 - **Battery-first.** One central scheduler, one 250ms timer. Each panel updates
   at its own (possibly fractional) interval; on battery every interval is
-  stretched by a configurable multiplier. Graphs redraw **only when a new sample
-  arrives**, never on a frame clock. Idle wakeups stay near zero.
+  stretched by a configurable multiplier. With `smooth = false` (stepped graphs)
+  there are no extra wakeups — graphs redraw only when a new sample arrives. The
+  default `smooth = true` adds continuous scrolling via a frame clock (prettier,
+  but it does redraw per frame while visible); flip it off for minimal wakeups.
 - **Worse-is-better.** Smallest thing that genuinely works, then iterate.
 - **Single process.** Metrics, taskbar via wlr-foreign-toplevel, and tray via
   StatusNotifier all live in-process — no IPC, no sockets, no helper daemons.
