@@ -126,6 +126,8 @@ pub struct Actions {
     pub logout: String,
     pub reboot: String,
     pub shutdown: String,
+    /// Launched when the volume meter is right-clicked.
+    pub mixer: String,
 }
 
 impl Default for Actions {
@@ -135,6 +137,7 @@ impl Default for Actions {
             logout: "loginctl terminate-session \"$XDG_SESSION_ID\"".into(),
             reboot: "systemctl reboot".into(),
             shutdown: "systemctl poweroff".into(),
+            mixer: "pavucontrol".into(),
         }
     }
 }
@@ -273,6 +276,7 @@ lock = "loginctl lock-session"
 logout = "loginctl terminate-session \"$XDG_SESSION_ID\""
 reboot = "systemctl reboot"
 shutdown = "systemctl poweroff"
+mixer = "pavucontrol"   # launched when the volume meter is right-clicked
 
 # Panels render top-to-bottom (vertical) or left-to-right (horizontal).
 # interval is seconds and may be fractional (e.g. 0.5 = 2 samples/sec).

@@ -144,6 +144,7 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
             },
             None,
             None,
+            None,
         )),
         "vol" | "volume" => Some(bar_panel(
             iv,
@@ -168,6 +169,10 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
             },
             Some(Box::new(|d| add_volume(d * 5.0))),
             Some(Box::new(toggle_mute)),
+            {
+                let mixer = actions.mixer.clone();
+                Some(Box::new(move || spawn(&mixer)))
+            },
         )),
         "bri" | "brightness" => Some(bar_panel(
             iv,
@@ -177,6 +182,7 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
                 None => ("\u{f185}".to_string(), "--".to_string(), 0.0),
             },
             Some(Box::new(|d| add_brightness(d * 5.0))),
+            None,
             None,
         )),
         other => {
@@ -324,6 +330,7 @@ fn bar_panel<F>(
     sampler: F,
     on_scroll: Option<Box<dyn Fn(f64)>>,
     on_click: Option<Box<dyn Fn()>>,
+    on_right: Option<Box<dyn Fn()>>,
 ) -> Panel
 where
     F: Fn() -> (String, String, f64) + 'static,
@@ -370,11 +377,18 @@ where
     }
     if let Some(click) = on_click {
         let gc = gtk::GestureClick::new();
+        gc.set_button(1); // primary only, so right-click is free for the mixer
         let refresh = refresh.clone();
         gc.connect_released(move |_, _, _, _| {
             click();
             refresh();
         });
+        row.add_controller(gc);
+    }
+    if let Some(right) = on_right {
+        let gc = gtk::GestureClick::new();
+        gc.set_button(3); // right-click
+        gc.connect_pressed(move |_, _, _, _| right());
         row.add_controller(gc);
     }
 

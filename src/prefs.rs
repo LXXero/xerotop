@@ -260,6 +260,20 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     });
     page.append(&row("On-battery interval ×", &mult));
 
+    // Volume mixer (launched on right-click of the volume meter).
+    let mixer = Entry::new();
+    mixer.set_text(&cfg.actions.mixer);
+    mixer.set_hexpand(true);
+    mixer.set_tooltip_text(Some("Press Enter to apply to the running bar"));
+    let h = handle.clone();
+    mixer.connect_changed(move |e| {
+        h.cfg.borrow_mut().actions.mixer = e.text().to_string();
+    });
+    // The command is captured when the volume panel is built, so rebind on Enter.
+    let h = handle.clone();
+    mixer.connect_activate(move |_| h.apply());
+    page.append(&row("Volume mixer (right-click)", &mixer));
+
     drop(cfg);
     page.append(&save_bar(handle));
     page
