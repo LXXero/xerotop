@@ -2,9 +2,10 @@
 
 A **gkrellm-style, battery-conscious system monitor** for Wayland (wlroots /
 layer-shell), in Rust + GTK4. A vertical (or horizontal) stack of live meters —
-CPU, memory, GPU, disk, network, temps/fan, battery, volume, brightness, a top
-process list — plus a real **taskbar** and **system tray with cascading menus**,
-all in **one process** with **zero polling subprocesses**.
+CPU (overall + per-core), memory, GPU, disk, network, temps/fans, battery,
+volume, brightness, a top process list, uptime, keyboard LEDs, and weather —
+plus a real **taskbar** and **system tray with cascading menus**, all in **one
+process** with **zero polling subprocesses**.
 
 It's the successor to an [ewwii](https://github.com/Ewwii-sh/ewwii)-based bar
 that spawned ~600 shell processes per second to poll metrics. xerotop reads
@@ -32,31 +33,36 @@ that spawned ~600 shell processes per second to poll metrics. xerotop reads
 
 Working:
 
-- **layer-shell bar** anchorable to any edge, configurable thickness & opacity
-- native meters with autoscaled gamma graphs: **CPU, MEM, GPU,
-  DISK, NET**
-- **TEMP** panel: multiple hwmon sensors as mini-charts + fan RPM
-- **BAT / VOL / BRI** as icon + level bar + value, with **scroll/click control**
-  (volume via ALSA, brightness via `brightnessctl`)
-- **TOP** process list (EMA-smoothed CPU%)
-- **header**: green power button (→ lock/logout/reboot/shutdown popover),
-  12-hour clock + date, brass lock button
+- **layer-shell bar** anchorable to any edge; configurable thickness, length
+  (full or fixed px + alignment), stacking layer (top/bottom/overlay/background),
+  monitor, and opacity. Graphs use ewwii-style dynamic `min..max` autoscaling.
+- meter panels: **CPU**, **CORES** (per-core mini bars), **MEM**, **GPU**,
+  **DISK**, **NET**
+- **TEMP/sensors**: fully configurable — pick any hwmon temp/fan from a list,
+  label/color/reorder each, plus an optional averaged row (bar + trend + value)
+- **BAT / VOL / BRI** as icon + rounded level bar + value, with **scroll/click
+  control** (volume via ALSA, brightness via `brightnessctl`, right-click volume
+  opens a configurable mixer)
+- **TOP** process list, **UPTIME**, **keyboard LEDs** (caps/num/scroll),
+  **WEATHER** (wttr.in, no API key)
+- **header**: a styled clock + date with **4 configurable icon slots** (left/right
+  of both the time and date), each a custom glyph + command (`@menu` opens the
+  power popover)
 - **taskbar** (`win`): open windows via wlr-foreign-toplevel — app icons, focus
   highlight, minimized = grayed/italic, left-click activate, right-click minimize
 - **system tray** (`tray`): StatusNotifier host — themed/pixmap icons,
   left-click activate, right-click **cascading D-Bus menu** with hover submenus
   and full `AboutToShow` support; menu item ids are resolved by path from the
   freshest layout so apps that renumber mid-open (nm-applet, …) don't misfire
-- TOML config with first-run defaults and a single battery-aware scheduler
 - **live preferences GUI** — right-click any dead space on the bar (gkrellm-style)
-  for Preferences/Quit, or run `xerotop --prefs`. Every control applies instantly
-  (no restart): edge, thickness, monitor, opacity, gamma, panels (add/remove/
-  reorder/intervals), and a full theme editor with live color & font pickers.
-- **themes** — colors + font are data, not baked CSS. The built-in `default`
-  reproduces the dark look; the GUI's "Save theme as…" writes
-  `~/.config/xerotop/themes/<name>.toml`, selectable by name.
+  for Preferences/Quit, or run `xerotop --prefs`. Five tabs (General / Theme /
+  Panels / Sensors / Commands); every control applies instantly, no restart.
+- **themes** — colors + font tiers (small/normal/large) are data, not baked CSS.
+  The built-in `default` reproduces the dark look; the GUI's "Save theme as…"
+  writes `~/.config/xerotop/themes/<name>.toml`, selectable by name.
 
-Planned: occlusion-aware pausing, multiple bars, horizontal-mode polish.
+Planned (see `TODO.md`): more configurable constants, load-average / MPRIS /
+network-info panels, occlusion-aware pausing, multiple bars, horizontal polish.
 
 ## Build & run
 
@@ -88,17 +94,31 @@ edge = "right"      # left | right | top | bottom  (left/right = vertical)
 thickness = 150     # px: width for vertical bars, height for horizontal
 length = "full"     # "full" to fill the edge, or a pixel count (e.g. 600)
 align = "center"    # start | center | end  (where a fixed-length bar sits)
+layer = "top"       # top | bottom | background | overlay (bottom = windows over bar)
 monitor = 0         # output index; -1 = compositor's choice
 smooth = true       # continuous graph scrolling; false = stepped (less battery)
-graph_gamma = 1.0   # autoscaled-graph spikiness; 1.0 = ewwii, >1 sharper peaks
+graph_gamma = 1.0   # graph spikiness; 1.0 = linear (ewwii), >1 sharper peaks
 opacity = 0.88      # background opacity: 0.0 transparent .. 1.0 opaque
 
 [power]
 battery_interval_multiplier = 2.0   # on battery, multiply every interval by this
 
-[actions]                           # header buttons run these on click
+[tray]
+columns = 8         # max tray icons per row
+icon_size = 18
+
+[weather]
+location = ""       # city / "lat,lon"; blank = auto by IP
+units = "auto"      # auto | c | f
+interval_min = 30
+
+[actions]                           # logout/reboot/shutdown power the @menu popover
 lock = "loginctl lock-session"
+mixer = "pavucontrol"               # right-click the volume meter
 # logout / reboot / shutdown ...
+
+# Sensors and header icons are managed in the GUI (Sensors / Commands tabs);
+# they write [[sensor]] and [[header_button]] entries here.
 
 [[panel]]                           # panels render in order (top→bottom / left→right)
 type = "header"
@@ -108,7 +128,8 @@ date_format = "%a %d %b"
 type = "cpu"
 interval = 2                        # seconds; may be fractional (0.5 = 2/sec)
 graph = true
-# ... mem, gpu, disk, net, temp, bat, vol, bri, top, win (taskbar), tray
+# ... cores, mem, gpu, disk, net, temp, weather, uptime, kbd, bat, vol, bri,
+#     top, win (taskbar), tray
 ```
 
 ## Architecture
@@ -117,12 +138,13 @@ graph = true
 |---|---|
 | `config.rs`  | TOML schema + load/first-run defaults (`Edge`, panels, actions) |
 | `power.rs`   | AC/battery detection (`/sys/class/power_supply`) |
-| `metrics.rs` | native samplers: cpu, mem, gpu, disk (statvfs), net, hwmon temps/fan, battery, ALSA volume, brightness |
-| `widgets.rs` | reusable `Graph` (multi-series, filled, gamma, time-windowed; redraws on push only) and `Bar` level meter |
-| `panels.rs`  | `Panel` builders + taskbar & tray UI (icon resolution, cascading menus) |
+| `metrics.rs` | native samplers: cpu (+ per-core), mem, gpu, disk (statvfs), net, hwmon sensor discovery/read, battery, ALSA volume, brightness, keyboard LEDs, uptime |
+| `widgets.rs` | reusable `Graph` (multi-series, filled, dynamic min..max), `Bar` level meter, `Cores` per-core bars |
+| `panels.rs`  | `Panel` builders + taskbar/tray/weather hosts (icon resolution, cascading menus) |
 | `taskbar.rs` | calloop thread: wlr-foreign-toplevel client → toplevel snapshots / actions |
 | `tray.rs`    | tokio thread: StatusNotifier host (`system-tray`) → item+menu snapshots / actions |
-| `theme.rs`   | `Theme` (colors + font) → generated stylesheet + graph palette; loads theme files |
-| `prefs.rs`   | live preferences GUI (General / Theme / Panels), mutates state + `apply()` |
+| `weather.rs` | background thread: wttr.in fetch → weather snapshots over a channel |
+| `theme.rs`   | `Theme` (colors + font tiers) → generated stylesheet + graph palette; loads theme files |
+| `prefs.rs`   | live preferences GUI (General / Theme / Panels / Sensors / Commands), mutates state + `apply()` |
 | `bar.rs`     | layer-shell window, `BarHandle::apply()` live re-render, right-click menu, scheduler |
 | `main.rs`    | app bootstrap, `--prefs` |

@@ -7,67 +7,89 @@
 <meta name="description" content="xerotop: a gkrellm-style, battery-conscious system monitor for Wayland (wlroots / layer-shell), in Rust + GTK4. One process, zero subprocesses.">
 <style>
   :root {
-    --bg:#0a0e0a; --panel:#0e140d; --line:#1d2a1a;
-    --fg:#8bd450; --dim:#5a7a48; --bright:#b6ff7a; --amber:#e0a83c;
-    --mono: ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", "SF Mono", Menlo, Consolas, monospace;
+    /* xerotop's default palette */
+    --panel:   rgba(16,16,20,0.82);   /* the bar's translucent dark, over blue */
+    --line:    rgba(255,255,255,0.10);
+    --fg:      #ccddee;               /* readout text */
+    --label:   #99aabb;              /* headers / accent */
+    --muted:   #667788;
+    --green:   #66ff66;
+    --cyan:    #66ccff;
+    --amber:   #ffbf4d;
+    --violet:  #c78cff;
+    --red:     #ff7366;
+    --brass:   #d4af37;
+    --mono: "FiraCode Nerd Font Mono", ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", Menlo, Consolas, monospace;
   }
   * { box-sizing:border-box; }
   html { -webkit-text-size-adjust:100%; }
   body {
-    margin:0; background:var(--bg); color:var(--fg);
+    margin:0; min-height:100vh; color:var(--fg);
     font-family:var(--mono); font-size:15px; line-height:1.6;
-    text-shadow:0 0 2px rgba(139,212,80,.25);
+    /* a blue desktop, the way it actually sits behind the translucent bar */
+    background:#0a1024;
+    background-image:
+      radial-gradient(1100px 560px at 18% -12%, rgba(96,132,228,.40), transparent 60%),
+      radial-gradient(820px 480px at 92% 112%, rgba(48,92,196,.28), transparent 60%),
+      linear-gradient(160deg, #101a38, #070b1c 70%);
+    background-attachment:fixed;
   }
-  /* faint CRT scanlines */
-  body::before {
-    content:""; position:fixed; inset:0; pointer-events:none; z-index:1;
-    background:repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 1px, transparent 1px 3px);
-    opacity:.5;
+  main {
+    max-width:720px; margin:2.5rem auto; padding:2rem 1.6rem 2.4rem;
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    backdrop-filter:blur(2px);
+    box-shadow:0 18px 60px rgba(0,0,0,.45);
   }
-  main { max-width:760px; margin:0 auto; padding:3rem 1.25rem 4rem; position:relative; z-index:2; }
-  a { color:var(--bright); text-decoration:none; border-bottom:1px solid var(--line); }
-  a:hover { color:#fff; border-color:var(--bright); }
-  h1 { margin:0; font-size:1px; color:transparent; }            /* wordmark is the ASCII art */
-  h2 { color:var(--amber); font-weight:600; font-size:1rem; margin:2.5rem 0 .75rem; }
-  h2::before { content:"// "; color:var(--dim); }
-  p { margin:.6rem 0; color:#a9d98a; }
-  .dim { color:var(--dim); }
-  .bright { color:var(--bright); }
-  pre { margin:0; }
+  a { color:var(--cyan); text-decoration:none; border-bottom:1px solid var(--line); }
+  a:hover { color:#fff; border-color:var(--cyan); }
+  h1 { margin:0; font-size:1px; color:transparent; }      /* wordmark is the ASCII art */
+  h2 { color:var(--cyan); font-weight:700; font-size:1rem; margin:2.2rem 0 .7rem; }
+  h2::before { content:"// "; color:var(--muted); }
+  p { margin:.6rem 0; color:var(--fg); }
+  .dim { color:var(--muted); }
+  .bright { color:#eef3fa; font-weight:600; }
+  .label { color:var(--label); }
 
-  .wordmark { color:var(--bright); font-size:clamp(.5rem,2.2vw,.85rem); line-height:1.1; margin:0; }
-  .tagline { color:var(--fg); margin:.25rem 0 1.5rem; }
-  .tagline .cur { display:inline-block; width:.6ch; background:var(--bright); animation:blink 1.1s steps(1) infinite; }
+  .wordmark { color:var(--label); font-size:clamp(.5rem,2.2vw,.85rem); line-height:1.1; margin:0;
+              text-shadow:0 0 12px rgba(122,162,247,.25); }
+  .tagline { color:var(--muted); margin:.25rem 0 1.5rem; }
+  .tagline .cur { display:inline-block; width:.6ch; background:var(--label); animation:blink 1.1s steps(1) infinite; }
   @keyframes blink { 50% { opacity:0; } }
 
-  /* the meter panel "hero" */
-  .panel {
-    background:var(--panel); border:1px solid var(--line); border-radius:4px;
-    padding:1rem 1.1rem; margin:1.5rem 0; box-shadow:0 0 24px rgba(139,212,80,.06) inset;
+  /* the meter panel "hero" — a mock of the real bar */
+  .bar {
+    background:rgba(16,16,20,0.6); border:1px solid var(--line); border-radius:8px;
+    padding:.9rem 1rem; margin:1.4rem 0; max-width:280px;
   }
-  .panel .ttl { color:var(--dim); margin-bottom:.6rem; }
-  .meter { display:flex; align-items:center; gap:.75rem; white-space:nowrap; }
-  .meter .lbl { color:var(--amber); width:3.5ch; }
-  .meter .bar { color:var(--bright); letter-spacing:1px; }
-  .meter .bar .e { color:var(--line); }
+  .clock { text-align:center; margin-bottom:.5rem; }
+  .clock .t { color:var(--label); font-weight:700; font-size:1.5rem; }
+  .clock .ap { color:var(--fg); font-size:.8rem; }
+  .clock .d { color:var(--muted); font-size:.8rem; }
+  .clock .d b { color:var(--label); font-weight:700; }
+  .meter { display:flex; align-items:center; gap:.6rem; white-space:nowrap; margin:.15rem 0; }
+  .meter .lbl { color:var(--label); font-weight:700; width:3.5ch; }
+  .meter .bar2 { letter-spacing:1px; }
+  .meter .e { color:var(--line); }
   .meter .val { color:var(--fg); margin-left:auto; }
-  .spark { color:var(--bright); animation:flicker 2.4s ease-in-out infinite; }
+  .g { color:var(--green); } .c { color:var(--cyan); } .v { color:var(--violet); }
+  .a { color:var(--amber); } .r { color:var(--red); }
+  .spark { animation:flicker 2.6s ease-in-out infinite; }
   @keyframes flicker { 0%,100%{opacity:.85} 50%{opacity:1} }
 
   ul { list-style:none; padding:0; margin:.5rem 0; }
-  li { margin:.35rem 0; color:#a9d98a; }
-  li::before { content:"› "; color:var(--amber); }
-  li.no::before { content:"× "; color:#a85; }
-  code { color:var(--bright); }
+  li { margin:.35rem 0; color:var(--fg); }
+  li::before { content:"› "; color:var(--cyan); }
+  li.no::before { content:"× "; color:var(--red); }
+  code { color:var(--green); }
   .codeblock {
-    background:#070a07; border:1px solid var(--line); border-left:2px solid var(--amber);
-    border-radius:3px; padding:.85rem 1rem; overflow-x:auto; color:#a9d98a; font-size:.92em;
+    background:rgba(0,0,0,.35); border:1px solid var(--line); border-left:2px solid var(--cyan);
+    border-radius:6px; padding:.85rem 1rem; overflow-x:auto; color:var(--fg); font-size:.92em;
   }
-  .codeblock .c { color:var(--dim); }
-  .nav { margin:1.75rem 0 0; display:flex; flex-wrap:wrap; gap:.5rem 1.25rem; }
-  .nav a { border:1px solid var(--line); padding:.35rem .85rem; border-radius:3px; }
-  .nav a::before { content:"[ "; color:var(--dim); } .nav a::after { content:" ]"; color:var(--dim); }
-  footer { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--line); color:var(--dim); font-size:.85em; }
+  .codeblock .cm { color:var(--muted); }
+  .nav { margin:1.75rem 0 0; display:flex; flex-wrap:wrap; gap:.5rem 1rem; }
+  .nav a { border:1px solid var(--line); padding:.35rem .85rem; border-radius:6px; }
+  .nav a::before { content:"[ "; color:var(--muted); } .nav a::after { content:" ]"; color:var(--muted); }
+  footer { margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--line); color:var(--muted); font-size:.85em; }
 </style>
 </head>
 <body>
@@ -81,64 +103,74 @@
                              |_|</pre>
   <p class="tagline">a battery-conscious system monitor for wayland.<span class="cur">&nbsp;</span></p>
 
-  <div class="panel" role="img" aria-label="Example xerotop meters: CPU 47 percent, memory 68 percent, network and battery active">
-    <div class="ttl">┌─ xerotop ─ right · 150px ──────────</div>
-    <div class="meter"><span class="lbl">CPU</span><span class="bar">▓▓▓▓▓<span class="e">░░░░░</span></span><span class="val">47%</span></div>
-    <div class="meter"><span class="lbl">MEM</span><span class="bar">▓▓▓▓▓▓▓<span class="e">░░░</span></span><span class="val">68%</span></div>
-    <div class="meter"><span class="lbl">NET</span><span class="bar spark">▁▂▃▅▇▅▃▂▁▂▄▆▇▆▄▂</span></div>
-    <div class="meter"><span class="lbl">TMP</span><span class="bar">▓▓▓▓<span class="e">░░░░░░</span></span><span class="val">52°C</span></div>
-    <div class="meter"><span class="lbl">BAT</span><span class="bar">▓▓▓▓▓▓▓▓<span class="e">░░</span></span><span class="val">81%</span></div>
+  <div class="bar" role="img" aria-label="Example xerotop bar: clock, CPU 14%, memory 36%, GPU, network, temperature, battery">
+    <div class="clock"><span class="t">11:48</span> <span class="ap">PM</span><br>
+      <span class="d">Mon <b>25</b> May</span></div>
+    <div class="meter"><span class="lbl">CPU</span><span class="bar2 g">▁▂▃▂▅▇▅▃▂▃▂▁▂</span><span class="val">14%</span></div>
+    <div class="meter"><span class="lbl">MEM</span><span class="bar2 c">▂▂▃▃▂▂▅▃▂▂▃▂▂</span><span class="val">36%</span></div>
+    <div class="meter"><span class="lbl">GPU</span><span class="bar2 v">▁▂▄▆▇▆▄▃▂▁▂▃▂</span><span class="val">7%</span></div>
+    <div class="meter"><span class="lbl">NET</span><span class="bar2 c spark">▁▂▃▅▇▅▃▂▁▂▄▆▇</span></div>
+    <div class="meter"><span class="lbl">cpu</span><span class="bar2 r">▓▓▓▓▓<span class="e">░░░░</span></span><span class="val">56°</span></div>
+    <div class="meter"><span class="lbl">BAT</span><span class="bar2 r">▓▓▓▓▓▓▓▓<span class="e">░░</span></span><span class="val">81%</span></div>
   </div>
 
   <p>A <span class="bright">gkrellm-style</span> system monitor for Wayland (wlroots / layer-shell),
      in <span class="bright">Rust + GTK4</span>. A vertical (or horizontal) stack of live meters —
-     CPU, memory, network, temp, battery, clock — all in <span class="bright">one process</span>
+     CPU &amp; per-core, memory, GPU, disk, network, temps/fans, battery, volume, brightness, top
+     processes, uptime, keyboard LEDs, weather — plus a real <span class="bright">taskbar</span> and
+     <span class="bright">system tray</span>, all in <span class="bright">one process</span>
      with <span class="bright">zero subprocesses</span>.</p>
 
   <p class="dim">It's the successor to an ewwii-based bar that spawned ~600 shell processes
-     <em>per second</em> to poll metrics. xerotop reads <code>/proc</code> and <code>/sys</code>
-     natively and redraws only when new data arrives.</p>
+     <em>per second</em> to poll metrics. xerotop reads <code>/proc</code>, <code>/sys</code>,
+     ALSA and statvfs natively and redraws only when new data arrives.</p>
 
   <h2>design principles</h2>
   <ul>
     <li><span class="bright">battery-first.</span> one scheduler, one timer; on battery every interval
         stretches by a configurable multiplier. with stepped graphs there are no extra wakeups; the default
-        smooth scrolling animates via a frame clock (toggle it off for minimal wakeups).</li>
-    <li><span class="bright">single process.</span> metrics, taskbar (wlr-foreign-toplevel) and tray
-        (StatusNotifier) — no IPC, no sockets, no helper daemons.</li>
+        smooth scrolling animates via a frame clock (toggle off for minimal wakeups).</li>
+    <li><span class="bright">single process.</span> metrics, taskbar (wlr-foreign-toplevel), tray
+        (StatusNotifier) and weather — no IPC, no sockets, no helper daemons.</li>
     <li><span class="bright">worse-is-better.</span> the smallest thing that genuinely works, then iterate.</li>
     <li><span class="bright">configure by prefs, not a config language.</span> plain, stable TOML, boring on
         purpose, never rug-pulled.</li>
     <li><span class="bright">orientation-agnostic.</span> vertical and horizontal bars share one layout model.</li>
   </ul>
 
-  <h2>status — feature-complete</h2>
+  <h2>what's in it</h2>
   <ul>
-    <li>layer-shell bar on any edge, configurable thickness / length / opacity</li>
-    <li>native CPU / MEM / GPU / DISK / NET / TEMP+fan / BATTERY / VOLUME / BRIGHTNESS meters, TOP process list</li>
-    <li>taskbar (wlr-foreign-toplevel) and system tray (StatusNotifier) with cascading menus</li>
-    <li>live preferences GUI (right-click the bar or <span class="bright">--prefs</span>) and a themes system</li>
-    <li class="no">planned: occlusion-aware pausing, multiple bars, horizontal-mode polish</li>
+    <li>layer-shell bar on any edge — thickness, length (full / fixed), alignment, stacking layer, monitor, opacity</li>
+    <li>meters: CPU, per-core mini-bars, MEM, GPU, DISK, NET — ewwii-style dynamic min..max graphs</li>
+    <li>fully configurable temp/fan sensors (pick / label / color / reorder + averaged row)</li>
+    <li>battery, volume, brightness (scroll &amp; click), top processes, uptime, keyboard LEDs, weather</li>
+    <li>styled clock with 4 configurable header icon slots (custom glyph + command each)</li>
+    <li>taskbar (wlr-foreign-toplevel) and system tray (StatusNotifier) with cascading hover menus</li>
+    <li>live preferences GUI (right-click the bar or <span class="bright">--prefs</span>) — General /
+        Theme / Panels / Sensors / Commands, everything applies instantly</li>
+    <li>data-driven themes (colors + font tiers); <code>Save theme as…</code> writes a theme file</li>
+    <li class="no">planned: load-avg / MPRIS / network-info panels, multiple bars, occlusion-aware pausing</li>
   </ul>
 
   <h2>build &amp; run</h2>
-  <pre class="codeblock"><span class="c"># needs GTK4, gtk4-layer-shell, and a wlroots compositor (labwc, sway, …)</span>
+  <pre class="codeblock"><span class="cm"># needs GTK4, gtk4-layer-shell, and a wlroots compositor (labwc, sway, …)</span>
 cargo build --release
 ./target/release/xerotop</pre>
   <p class="dim">Pinned to gtk4-rs 0.10 so it builds on Rust 1.89.</p>
 
   <h2>configure</h2>
-  <p class="dim">first run writes <code>~/.config/xerotop/config.toml</code>:</p>
-  <pre class="codeblock">[bar]
-edge = "right"      <span class="c"># left | right | top | bottom</span>
-thickness = 150     <span class="c"># px</span>
+  <p class="dim">first run writes <code>~/.config/xerotop/config.toml</code> — or just use the GUI:</p>
+  <pre class="codeblock">theme = "default"
 
-[power]
-battery_interval_multiplier = 2.0
+[bar]
+edge = "right"      <span class="cm"># left | right | top | bottom</span>
+thickness = 150     <span class="cm"># px</span>
+length = "full"     <span class="cm"># "full" or a pixel count</span>
+opacity = 0.88
 
 [[panel]]
 type = "cpu"
-interval = 1
+interval = 2
 graph = true</pre>
 
   <nav class="nav">
