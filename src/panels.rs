@@ -74,6 +74,16 @@ pub fn set_palette(p: Palette) {
     PALETTE.with(|c| c.set(p));
 }
 
+thread_local! {
+    /// (max icons per row, icon size px) for the tray.
+    static TRAY_CFG: std::cell::Cell<(i32, i32)> = const { std::cell::Cell::new((8, 18)) };
+}
+
+/// Set tray layout (columns, icon size). Call before (re)building panels.
+pub fn set_tray(columns: i32, icon_size: i32) {
+    TRAY_CFG.with(|c| c.set((columns.max(1), icon_size.max(1))));
+}
+
 /// The current graph palette.
 fn pal() -> Palette {
     PALETTE.with(|c| c.get())
@@ -623,7 +633,7 @@ fn desktop_icon(want: &str, tail: &str) -> Option<String> {
 /// Build a tray icon image from a StatusNotifier item (themed name, else pixmap).
 fn tray_image(it: &crate::tray::TrayItem) -> gtk::Image {
     let img = gtk::Image::new();
-    img.set_pixel_size(18);
+    img.set_pixel_size(TRAY_CFG.with(|c| c.get().1));
     if let (Some(name), Some(display)) = (&it.icon_name, gtk::gdk::Display::default()) {
         let theme = gtk::IconTheme::for_display(&display);
         if let Some(path) = &it.icon_theme_path {
@@ -882,7 +892,7 @@ fn tray_panel() -> Panel {
     let flow = gtk::FlowBox::new();
     flow.set_selection_mode(gtk::SelectionMode::None);
     flow.set_min_children_per_line(1);
-    flow.set_max_children_per_line(8);
+    flow.set_max_children_per_line(TRAY_CFG.with(|c| c.get().0) as u32);
     flow.set_homogeneous(false);
     root.append(&flow);
 

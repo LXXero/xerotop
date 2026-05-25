@@ -118,6 +118,25 @@ impl Default for PowerConfig {
     }
 }
 
+/// System-tray layout knobs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TrayConfig {
+    /// Max icons per row before wrapping to a new line.
+    pub columns: i32,
+    /// Tray icon size in px.
+    pub icon_size: i32,
+}
+
+impl Default for TrayConfig {
+    fn default() -> Self {
+        Self {
+            columns: 8,
+            icon_size: 18,
+        }
+    }
+}
+
 /// Shell commands run by the header buttons (one-shot, on click — not polled).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -205,6 +224,8 @@ pub struct Config {
     #[serde(default)]
     pub power: PowerConfig,
     #[serde(default)]
+    pub tray: TrayConfig,
+    #[serde(default)]
     pub actions: Actions,
     #[serde(default = "default_panels")]
     pub panel: Vec<PanelConfig>,
@@ -220,6 +241,7 @@ impl Default for Config {
             theme: default_theme(),
             bar: BarConfig::default(),
             power: PowerConfig::default(),
+            tray: TrayConfig::default(),
             actions: Actions::default(),
             panel: default_panels(),
         }
@@ -269,6 +291,10 @@ opacity = 0.88      # background opacity: 0.0 transparent .. 1.0 opaque
 [power]
 # On battery, multiply every panel's update interval by this (saves wakeups).
 battery_interval_multiplier = 2.0
+
+[tray]
+columns = 8         # max tray icons per row before wrapping
+icon_size = 18      # tray icon size in px
 
 # Header buttons run these on click (one-shot, not polled).
 [actions]

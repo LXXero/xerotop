@@ -63,6 +63,7 @@ impl BarHandle {
         let theme = self.theme.borrow();
         panels::set_gamma(cfg.bar.graph_gamma);
         panels::set_palette(theme.palette());
+        panels::set_tray(cfg.tray.columns, cfg.tray.icon_size);
 
         // Generate the whole stylesheet from the theme (colors + font); the bar
         // background alpha comes from config opacity.

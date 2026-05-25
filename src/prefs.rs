@@ -274,6 +274,25 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     mixer.connect_activate(move |_| h.apply());
     page.append(&row("Volume mixer (right-click)", &mixer));
 
+    // Tray layout
+    let tray_cols = SpinButton::with_range(1.0, 32.0, 1.0);
+    tray_cols.set_value(cfg.tray.columns as f64);
+    let h = handle.clone();
+    tray_cols.connect_value_changed(move |s| {
+        h.cfg.borrow_mut().tray.columns = s.value() as i32;
+        h.apply();
+    });
+    page.append(&row("Tray icons per row", &tray_cols));
+
+    let tray_size = SpinButton::with_range(8.0, 64.0, 1.0);
+    tray_size.set_value(cfg.tray.icon_size as f64);
+    let h = handle.clone();
+    tray_size.connect_value_changed(move |s| {
+        h.cfg.borrow_mut().tray.icon_size = s.value() as i32;
+        h.apply();
+    });
+    page.append(&row("Tray icon size (px)", &tray_size));
+
     drop(cfg);
     page.append(&save_bar(handle));
     page
