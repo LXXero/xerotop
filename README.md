@@ -44,10 +44,10 @@ Working:
   control** (volume via ALSA, brightness via `brightnessctl`, right-click volume
   opens a configurable mixer)
 - **TOP** process list, **UPTIME**, **keyboard LEDs** (caps/num/scroll),
-  **WEATHER** (wttr.in, no API key)
+  **WEATHER** (wttr.in, no API key — compact icon + temp, full report on hover)
 - **header**: a styled clock + date with **4 configurable icon slots** (left/right
-  of both the time and date), each a custom glyph + command (`@menu` opens the
-  power popover)
+  of both the time and date), each a custom glyph + command + color (`@menu`
+  opens the power popover)
 - **taskbar** (`win`): open windows via wlr-foreign-toplevel — app icons, focus
   highlight, minimized = grayed/italic, left-click activate, right-click minimize
 - **system tray** (`tray`): StatusNotifier host — themed/pixmap icons,
