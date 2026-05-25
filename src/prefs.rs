@@ -390,6 +390,7 @@ fn panels_page(handle: &BarHandle) -> GtkBox {
     let add_row = GtkBox::new(Orientation::Horizontal, 8);
     add_row.set_margin_top(8);
     let kinds = DropDown::from_strings(&PANEL_TYPES);
+    add_row.append(&kinds); // show the type chooser (was missing → always added "header")
     let add = Button::with_label("Add panel");
     let h = handle.clone();
     let list_c = list.clone();
