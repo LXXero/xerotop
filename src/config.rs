@@ -383,3 +383,78 @@ type = "win"        # taskbar (open windows via wlr-foreign-toplevel)
 [[panel]]
 type = "tray"       # system tray (StatusNotifier)
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_toml_parses() {
+        toml::from_str::<Config>(DEFAULT_TOML).expect("DEFAULT_TOML must parse");
+    }
+
+    #[test]
+    fn default_toml_intervals_are_what_first_run_gets() {
+        // load() writes DEFAULT_TOML then parses it, so first launch must match
+        // these per-panel intervals (regression guard for the first-run bug).
+        let cfg = toml::from_str::<Config>(DEFAULT_TOML).unwrap();
+        let iv = |kind: &str| {
+            cfg.panel
+                .iter()
+                .find(|p| p.kind == kind)
+                .map(|p| p.interval)
+        };
+        assert_eq!(iv("cpu"), Some(2.0));
+        assert_eq!(iv("bat"), Some(10.0));
+        assert_eq!(iv("top"), Some(3.0));
+        assert_eq!(iv("mem"), Some(1.0));
+    }
+
+    #[test]
+    fn empty_config_uses_serde_defaults() {
+        let cfg = toml::from_str::<Config>("").unwrap();
+        assert_eq!(cfg.theme, "default");
+        assert_eq!(cfg.bar.thickness, 150);
+        assert_eq!(cfg.actions.mixer, "pavucontrol");
+        assert!(!cfg.panel.is_empty());
+    }
+
+    #[test]
+    fn interval_accepts_int_or_float_or_missing() {
+        let int: PanelConfig = toml::from_str("type = \"cpu\"\ninterval = 2").unwrap();
+        assert_eq!(int.interval, 2.0);
+        let flt: PanelConfig = toml::from_str("type = \"cpu\"\ninterval = 0.5").unwrap();
+        assert_eq!(flt.interval, 0.5);
+        let none: PanelConfig = toml::from_str("type = \"cpu\"").unwrap();
+        assert_eq!(none.interval, 1.0); // default_interval
+        assert!(none.graph); // default_true
+    }
+
+    #[test]
+    fn bar_length_parses_word_or_pixels() {
+        let full: BarConfig = toml::from_str("length = \"full\"").unwrap();
+        assert_eq!(full.length, BarLength::Full);
+        let max: BarConfig = toml::from_str("length = \"max\"").unwrap();
+        assert_eq!(max.length, BarLength::Full);
+        let px: BarConfig = toml::from_str("length = 600").unwrap();
+        assert_eq!(px.length, BarLength::Px(600));
+        // round-trips back to a word/number
+        assert!(toml::to_string(&full).unwrap().contains("\"full\""));
+    }
+
+    #[test]
+    fn align_and_layer_parse() {
+        let bc: BarConfig = toml::from_str("align = \"end\"\nlayer = \"bottom\"").unwrap();
+        assert_eq!(bc.align, Align::End);
+        assert_eq!(bc.layer, Layer::Bottom);
+    }
+
+    #[test]
+    fn config_round_trips_through_toml() {
+        // Serialize defaults and parse them back without error (Save path).
+        let s = toml::to_string_pretty(&Config::default()).unwrap();
+        let back = toml::from_str::<Config>(&s).unwrap();
+        assert_eq!(back.bar.opacity, Config::default().bar.opacity);
+        assert_eq!(back.panel.len(), Config::default().panel.len());
+    }
+}

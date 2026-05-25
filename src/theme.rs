@@ -78,6 +78,12 @@ fn parse_hex(s: &str) -> (u8, u8, u8) {
     (128, 128, 128)
 }
 
+/// Strip CSS-significant characters from a font name so a theme can't break out
+/// of the quoted `font-family` value and inject rules.
+fn sanitize_font(name: &str) -> String {
+    name.replace(['"', '\\', ';', '{', '}', '\n', '\r'], "")
+}
+
 fn rgba(hex: &str, a: f64) -> Rgba {
     let (r, g, b) = parse_hex(hex);
     (r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0, a)
@@ -119,9 +125,7 @@ impl Theme {
             let (r, g, b) = parse_hex(s);
             format!("#{r:02x}{g:02x}{b:02x}")
         };
-        let font = self
-            .font_family
-            .replace(['"', '\\', ';', '{', '}', '\n', '\r'], "");
+        let font = sanitize_font(&self.font_family);
         format!(
             r#"
 /* The bar window must be transparent, or our semi-transparent .bar fill
@@ -207,5 +211,99 @@ pub fn resolve(name: &str) -> Theme {
             eprintln!("xerotop: theme '{name}' not found; using default");
             Theme::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_hex_valid_with_and_without_hash() {
+        assert_eq!(parse_hex("#ff8800"), (255, 136, 0));
+        assert_eq!(parse_hex("ff8800"), (255, 136, 0));
+        assert_eq!(parse_hex("  #00ff00 "), (0, 255, 0));
+    }
+
+    #[test]
+    fn parse_hex_malformed_falls_back_to_grey() {
+        assert_eq!(parse_hex("nope"), (128, 128, 128));
+        assert_eq!(parse_hex("#fff"), (128, 128, 128)); // 3-digit not supported
+        assert_eq!(parse_hex("#gggggg"), (128, 128, 128));
+        assert_eq!(parse_hex(""), (128, 128, 128));
+    }
+
+    #[test]
+    fn lighten_endpoints() {
+        assert_eq!(lighten("#000000", 1.0), "#ffffff");
+        assert_eq!(lighten("#3366cc", 0.0), "#3366cc"); // 0 = unchanged
+        assert_eq!(lighten("#ffffff", 0.5), "#ffffff");
+    }
+
+    #[test]
+    fn palette_maps_hex_to_rgba() {
+        let t = Theme::default();
+        let p = t.palette();
+        // #66ff66 -> (0.4, 1.0, 0.4) at the graph fill alpha
+        let (r, g, b, a) = p.green;
+        assert!((r - 0.4).abs() < 0.01 && (g - 1.0).abs() < 0.01 && (b - 0.4).abs() < 0.01);
+        assert!((a - 0.9).abs() < 0.001);
+    }
+
+    #[test]
+    fn css_is_scoped_and_embeds_opacity_font_sizes() {
+        let css = Theme::default().css(0.5);
+        assert!(
+            css.contains("window.xerotop"),
+            "transparent rule must be scoped"
+        );
+        assert!(css.contains("rgba(16,16,20,0.500)"), "bg + opacity");
+        assert!(css.contains("FiraCode Nerd Font Mono"));
+        assert!(css.contains("font-size: 12px")); // font_normal default
+        assert!(css.contains("font-size: 18px")); // font_large default (clock)
+    }
+
+    #[test]
+    fn css_normalizes_bad_colors() {
+        let t = Theme {
+            label: "not-a-color".into(),
+            ..Theme::default()
+        };
+        assert!(
+            t.css(1.0).contains("#808080"),
+            "bad color normalized to grey"
+        );
+    }
+
+    #[test]
+    fn sanitize_font_strips_css_significant_chars() {
+        // A clean name passes through untouched.
+        assert_eq!(
+            sanitize_font("FiraCode Nerd Font Mono"),
+            "FiraCode Nerd Font Mono"
+        );
+        // A malicious name can't keep the chars needed to escape the quoted value.
+        let out = sanitize_font("Evil\"; } * { color: red; }");
+        for c in ['"', ';', '{', '}', '\\', '\n', '\r'] {
+            assert!(!out.contains(c), "must strip {c:?}");
+        }
+    }
+
+    #[test]
+    fn valid_name_accepts_slugs_rejects_paths() {
+        assert!(is_valid_name("nord"));
+        assert!(is_valid_name("my_theme-2"));
+        assert!(!is_valid_name(""));
+        assert!(!is_valid_name("../etc/passwd"));
+        assert!(!is_valid_name("a/b"));
+        assert!(!is_valid_name("a.b")); // dots disallowed (no traversal)
+        assert!(!is_valid_name("has space"));
+    }
+
+    #[test]
+    fn unknown_theme_resolves_to_default() {
+        // A bogus/unsafe name must never read outside themes/ — falls back.
+        let t = resolve("../../../etc/shadow");
+        assert_eq!(t.font_family, Theme::default().font_family);
     }
 }
