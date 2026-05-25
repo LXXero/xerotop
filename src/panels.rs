@@ -599,7 +599,6 @@ fn pixmap_texture(w: i32, h: i32, argb: &[u8]) -> Option<gtk::gdk::Texture> {
 #[allow(clippy::too_many_arguments)]
 fn make_menu_popover(
     entries: &[crate::tray::MenuEntry],
-    stable: &gtk::Widget,
     atx: &Rc<async_channel::Sender<crate::tray::TrayAction>>,
     addr: &str,
     mp: &str,
@@ -665,7 +664,6 @@ fn make_menu_popover(
             row.add_controller(motion);
         } else {
             let children = e.children.clone();
-            let stable_c = stable.clone();
             let atx_c = atx.clone();
             let addr_c = addr.to_string();
             let mp_c = mp.to_string();
@@ -688,7 +686,6 @@ fn make_menu_popover(
                 ));
                 let child = make_menu_popover(
                     &children,
-                    &stable_c,
                     &atx_c,
                     &addr_c,
                     &mp_c,
@@ -696,15 +693,10 @@ fn make_menu_popover(
                     false,
                     gtk::PositionType::Right,
                 );
-                child.set_parent(&stable_c);
-                if let Some(b) = rw.compute_bounds(&stable_c) {
-                    child.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
-                        b.x() as i32,
-                        b.y() as i32,
-                        b.width() as i32,
-                        b.height() as i32,
-                    )));
-                }
+                // Parent to the submenu row (inside this popover) so GTK treats
+                // it as a nested sub-popover — the root won't autohide and eat
+                // clicks made inside the child.
+                child.set_parent(&rw);
                 child.popup();
                 cur.replace(Some(child));
             };
@@ -798,7 +790,6 @@ fn tray_panel() -> Panel {
                         };
                         let pop = make_menu_popover(
                             &entries,
-                            &stable,
                             &atx,
                             &addr,
                             &menu_path,

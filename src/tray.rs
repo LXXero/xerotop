@@ -4,6 +4,7 @@
 //! menu-click requests back.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use system_tray::client::{ActivateRequest, Client, Event, UpdateEvent};
 use system_tray::item::{IconPixmap, StatusNotifierItem};
 use system_tray::menu::{MenuItem, MenuType, TrayMenu};
@@ -107,7 +108,7 @@ async fn run(
     tx: async_channel::Sender<Vec<TrayItem>>,
     arx: async_channel::Receiver<TrayAction>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new().await?;
+    let client = Arc::new(Client::new().await?);
     let mut sub = client.subscribe();
     let mut items: HashMap<String, TrayItem> = HashMap::new();
 
@@ -135,7 +136,11 @@ async fn run(
                         // lazily populate it now; the refreshed layout comes back
                         // as a later UpdateEvent::Menu.
                         if let Some(mp) = item.menu.clone() {
-                            let _ = client.about_to_show_menuitem(addr.clone(), mp, 0).await;
+                            let c = client.clone();
+                            let a = addr.clone();
+                            tokio::spawn(async move {
+                                let _ = c.about_to_show_menuitem(a, mp, 0).await;
+                            });
                         }
                     }
                     Ok(Event::Update(addr, update)) => {
@@ -159,21 +164,36 @@ async fn run(
             }
             req = arx.recv() => {
                 match req {
+                    // Run D-Bus calls off the loop so they never block processing
+                    // of incoming menu refreshes (which would let ids go stale).
                     Ok(TrayAction::Activate(address)) => {
-                        let _ = client
-                            .activate(ActivateRequest::Default { address, x: 0, y: 0 })
-                            .await;
+                        let c = client.clone();
+                        tokio::spawn(async move {
+                            let _ = c
+                                .activate(ActivateRequest::Default { address, x: 0, y: 0 })
+                                .await;
+                        });
                     }
                     Ok(TrayAction::MenuClick(address, menu_path, submenu_id)) => {
-                        if let Err(e) = client
-                            .activate(ActivateRequest::MenuItem { address, menu_path, submenu_id })
-                            .await
-                        {
-                            eprintln!("xerotop: menu activate failed: {e}");
-                        }
+                        let c = client.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = c
+                                .activate(ActivateRequest::MenuItem {
+                                    address,
+                                    menu_path,
+                                    submenu_id,
+                                })
+                                .await
+                            {
+                                eprintln!("xerotop: menu activate failed: {e}");
+                            }
+                        });
                     }
                     Ok(TrayAction::AboutToShow(address, menu_path, id)) => {
-                        let _ = client.about_to_show_menuitem(address, menu_path, id).await;
+                        let c = client.clone();
+                        tokio::spawn(async move {
+                            let _ = c.about_to_show_menuitem(address, menu_path, id).await;
+                        });
                     }
                     Err(_) => break,
                 }
