@@ -152,7 +152,7 @@ window.xerotop {{ background-color: transparent; }}
 .clock-time {{ font-weight: bold; font-size: {large}px; color: {label}; }}
 .clock-ampm {{ font-size: {small}px; color: {value}; }}
 .clock-date {{ font-size: {small}px; color: {label}; }}
-.clock-daynum {{ font-weight: bold; font-size: {normal}px; color: {label}; }}
+.clock-daynum {{ font-weight: bold; font-size: {normal}px; color: {value}; }}
 .hbtn {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; min-width: 0; padding: 0 4px; color: {label}; font-size: 17px; }}
 .hbtn:hover {{ color: {bright}; }}
 .lock {{ color: {lock}; }}
