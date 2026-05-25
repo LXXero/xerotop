@@ -800,6 +800,62 @@ fn make_menu_popover(
     pop
 }
 
+// The tray and taskbar each talk to a background host thread (D-Bus / Wayland).
+// Those hosts must be spawned exactly ONCE for the whole process — not per
+// panel-rebuild, or every live `apply()` (e.g. dragging a slider) would spawn
+// another host and they'd fight over the bus. So each host is memoized in a
+// thread-local; rebuilding the panel just swaps the render callback and repaints
+// from the last snapshot.
+
+type TrayItems = Vec<crate::tray::TrayItem>;
+type TrayRenderFn = Rc<dyn Fn(&[crate::tray::TrayItem])>;
+type TrayRender = Rc<RefCell<Option<TrayRenderFn>>>;
+
+#[derive(Clone)]
+struct TrayHost {
+    atx: Rc<async_channel::Sender<crate::tray::TrayAction>>,
+    latest: Rc<RefCell<TrayItems>>,
+    render: TrayRender,
+    store: MenuStore,
+}
+
+thread_local! {
+    static TRAY_HOST: RefCell<Option<TrayHost>> = const { RefCell::new(None) };
+}
+
+/// The single tray host, spawned on first use.
+fn tray_host() -> TrayHost {
+    TRAY_HOST.with(|cell| {
+        if cell.borrow().is_none() {
+            let (rx, atx) = crate::tray::spawn();
+            let host = TrayHost {
+                atx: Rc::new(atx),
+                latest: Rc::new(RefCell::new(Vec::new())),
+                render: Rc::new(RefCell::new(None)),
+                store: Rc::new(RefCell::new(HashMap::new())),
+            };
+            let (latest, render, store) =
+                (host.latest.clone(), host.render.clone(), host.store.clone());
+            gtk::glib::spawn_future_local(async move {
+                while let Ok(items) = rx.recv().await {
+                    // freshest menu trees so clicks resolve current ids
+                    *store.borrow_mut() = items
+                        .iter()
+                        .map(|it| (it.id.clone(), it.menu.clone()))
+                        .collect();
+                    *latest.borrow_mut() = items.clone();
+                    let cb = render.borrow().clone();
+                    if let Some(cb) = cb {
+                        cb(&items);
+                    }
+                }
+            });
+            *cell.borrow_mut() = Some(host);
+        }
+        cell.borrow().as_ref().unwrap().clone()
+    })
+}
+
 /// System tray: StatusNotifier items as clickable icons (left-click activates).
 fn tray_panel() -> Panel {
     let root = panel_box();
@@ -811,100 +867,94 @@ fn tray_panel() -> Panel {
     flow.set_homogeneous(false);
     root.append(&flow);
 
-    let (rx, atx) = crate::tray::spawn();
-    let atx = Rc::new(atx);
+    let host = tray_host();
+    let atx = host.atx.clone();
+    let store = host.store.clone();
     let flow2 = flow.clone();
-    let root2 = root.clone(); // stable parent for popovers (survives rebuilds)
-    let store: MenuStore = Rc::new(RefCell::new(HashMap::new()));
-    gtk::glib::spawn_future_local(async move {
-        while let Ok(items) = rx.recv().await {
-            // keep freshest menu trees so clicks resolve the current ids
-            *store.borrow_mut() = items
-                .iter()
-                .map(|it| (it.id.clone(), it.menu.clone()))
-                .collect();
-            while let Some(child) = flow2.first_child() {
-                flow2.remove(&child);
+    let root2 = root.clone(); // stable popover parent for this panel instance
+
+    let render: TrayRenderFn = Rc::new(move |items| {
+        while let Some(child) = flow2.first_child() {
+            flow2.remove(&child);
+        }
+        for it in items {
+            let btn = gtk::Button::new();
+            btn.add_css_class("tray-item");
+            btn.set_has_frame(false);
+            btn.set_tooltip_text(Some(&it.title));
+            btn.set_child(Some(&tray_image(it)));
+
+            // left-click: activate
+            {
+                let atx = atx.clone();
+                let id = it.id.clone();
+                btn.connect_clicked(move |_| {
+                    let _ = atx.try_send(crate::tray::TrayAction::Activate(id.clone()));
+                });
             }
-            for it in items {
-                let btn = gtk::Button::new();
-                btn.add_css_class("tray-item");
-                btn.set_has_frame(false);
-                btn.set_tooltip_text(Some(&it.title));
-                btn.set_child(Some(&tray_image(&it)));
 
-                // left-click: activate
-                {
-                    let atx = atx.clone();
-                    let id = it.id.clone();
-                    btn.connect_clicked(move |_| {
-                        let _ = atx.try_send(crate::tray::TrayAction::Activate(id.clone()));
-                    });
-                }
-
-                // right-click: custom cascading menu (direct handlers + hover)
-                if it.menu_path.is_some() && !it.menu.is_empty() {
-                    let atx = atx.clone();
-                    let addr = it.id.clone();
-                    let menu_path = it.menu_path.clone().unwrap();
-                    let entries = it.menu.clone();
-                    let btn_weak = btn.downgrade();
-                    let parent = root2.clone();
-                    let store_g = store.clone();
-                    let gesture = gtk::GestureClick::new();
-                    gesture.set_button(3);
-                    gesture.connect_pressed(move |_, _, _, _| {
-                        let Some(anchor) = btn_weak.upgrade() else {
-                            return;
-                        };
-                        // ask the app to refresh its menu (DBusMenu AboutToShow)
-                        let _ = atx.try_send(crate::tray::TrayAction::AboutToShow(
-                            addr.clone(),
-                            menu_path.clone(),
-                            0,
-                        ));
-                        let stable: gtk::Widget = parent.clone().upcast();
-                        // dismiss() closes the root, whose closed handler cascades.
-                        let root_holder: Rc<RefCell<Option<gtk::Popover>>> =
-                            Rc::new(RefCell::new(None));
-                        let dismiss: Rc<dyn Fn()> = {
-                            let h = root_holder.clone();
-                            Rc::new(move || {
-                                if let Some(p) = h.borrow().as_ref() {
-                                    p.popdown();
-                                }
-                            })
-                        };
-                        let pop = make_menu_popover(
-                            &entries,
-                            &atx,
-                            &addr,
-                            &menu_path,
-                            &dismiss,
-                            &store_g,
-                            &[],
-                            true,
-                            gtk::PositionType::Left,
-                        );
-                        pop.set_parent(&stable);
-                        if let Some(b) = anchor.compute_bounds(&stable) {
-                            pop.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
-                                b.x() as i32,
-                                b.y() as i32,
-                                b.width() as i32,
-                                b.height() as i32,
-                            )));
-                        }
-                        root_holder.replace(Some(pop.clone()));
-                        pop.popup();
-                    });
-                    btn.add_controller(gesture);
-                }
-
-                flow2.insert(&btn, -1);
+            // right-click: custom cascading menu (direct handlers + hover)
+            if it.menu_path.is_some() && !it.menu.is_empty() {
+                let atx = atx.clone();
+                let addr = it.id.clone();
+                let menu_path = it.menu_path.clone().unwrap();
+                let entries = it.menu.clone();
+                let btn_weak = btn.downgrade();
+                let parent = root2.clone();
+                let store_g = store.clone();
+                let gesture = gtk::GestureClick::new();
+                gesture.set_button(3);
+                gesture.connect_pressed(move |_, _, _, _| {
+                    let Some(anchor) = btn_weak.upgrade() else {
+                        return;
+                    };
+                    let _ = atx.try_send(crate::tray::TrayAction::AboutToShow(
+                        addr.clone(),
+                        menu_path.clone(),
+                        0,
+                    ));
+                    let stable: gtk::Widget = parent.clone().upcast();
+                    let root_holder: Rc<RefCell<Option<gtk::Popover>>> =
+                        Rc::new(RefCell::new(None));
+                    let dismiss: Rc<dyn Fn()> = {
+                        let h = root_holder.clone();
+                        Rc::new(move || {
+                            if let Some(p) = h.borrow().as_ref() {
+                                p.popdown();
+                            }
+                        })
+                    };
+                    let pop = make_menu_popover(
+                        &entries,
+                        &atx,
+                        &addr,
+                        &menu_path,
+                        &dismiss,
+                        &store_g,
+                        &[],
+                        true,
+                        gtk::PositionType::Left,
+                    );
+                    pop.set_parent(&stable);
+                    if let Some(b) = anchor.compute_bounds(&stable) {
+                        pop.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+                            b.x() as i32,
+                            b.y() as i32,
+                            b.width() as i32,
+                            b.height() as i32,
+                        )));
+                    }
+                    root_holder.replace(Some(pop.clone()));
+                    pop.popup();
+                });
+                btn.add_controller(gesture);
             }
+
+            flow2.insert(&btn, -1);
         }
     });
+    render(&host.latest.borrow());
+    *host.render.borrow_mut() = Some(render);
 
     Panel {
         root: root.upcast(),
@@ -913,8 +963,48 @@ fn tray_panel() -> Panel {
     }
 }
 
-/// Taskbar: open windows via wlr-foreign-toplevel, rebuilt on each snapshot
-/// streamed from the wayland listener thread.
+type Toplevels = Vec<crate::taskbar::Toplevel>;
+type TaskbarRenderFn = Rc<dyn Fn(&[crate::taskbar::Toplevel])>;
+type TaskbarRender = Rc<RefCell<Option<TaskbarRenderFn>>>;
+
+#[derive(Clone)]
+struct TaskbarHost {
+    atx: Rc<calloop::channel::Sender<crate::taskbar::Action>>,
+    latest: Rc<RefCell<Toplevels>>,
+    render: TaskbarRender,
+}
+
+thread_local! {
+    static TASKBAR_HOST: RefCell<Option<TaskbarHost>> = const { RefCell::new(None) };
+}
+
+/// The single taskbar host, spawned on first use.
+fn taskbar_host() -> TaskbarHost {
+    TASKBAR_HOST.with(|cell| {
+        if cell.borrow().is_none() {
+            let (rx, atx) = crate::taskbar::spawn();
+            let host = TaskbarHost {
+                atx: Rc::new(atx),
+                latest: Rc::new(RefCell::new(Vec::new())),
+                render: Rc::new(RefCell::new(None)),
+            };
+            let (latest, render) = (host.latest.clone(), host.render.clone());
+            gtk::glib::spawn_future_local(async move {
+                while let Ok(tops) = rx.recv().await {
+                    *latest.borrow_mut() = tops.clone();
+                    let cb = render.borrow().clone();
+                    if let Some(cb) = cb {
+                        cb(&tops);
+                    }
+                }
+            });
+            *cell.borrow_mut() = Some(host);
+        }
+        cell.borrow().as_ref().unwrap().clone()
+    })
+}
+
+/// Taskbar: open windows via wlr-foreign-toplevel, repainted on each snapshot.
 fn taskbar_panel() -> Panel {
     let root = panel_box();
     root.add_css_class("taskbar");
@@ -925,61 +1015,62 @@ fn taskbar_panel() -> Panel {
     let list = GtkBox::new(Orientation::Vertical, 1);
     root.append(&list);
 
-    let (rx, atx) = crate::taskbar::spawn();
-    let atx = Rc::new(atx);
+    let host = taskbar_host();
+    let atx = host.atx.clone();
     let list2 = list.clone();
-    gtk::glib::spawn_future_local(async move {
-        while let Ok(tops) = rx.recv().await {
-            while let Some(child) = list2.first_child() {
-                list2.remove(&child);
-            }
-            for t in tops {
-                let row = GtkBox::new(Orientation::Horizontal, 4);
-                if let Some(img) = resolve_icon(&t.app_id) {
-                    img.set_pixel_size(16);
-                    row.append(&img);
-                }
-                let text = if t.title.is_empty() {
-                    t.app_id.clone()
-                } else {
-                    t.title.clone()
-                };
-                let lbl = Label::new(Some(&text));
-                lbl.set_xalign(0.0);
-                lbl.set_hexpand(true);
-                lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
-                lbl.set_max_width_chars(1); // ellipsize within the bar width
-                row.append(&lbl);
 
-                let btn = gtk::Button::new();
-                btn.add_css_class("task");
-                if t.activated {
-                    btn.add_css_class("task-active");
-                }
-                if t.minimized {
-                    btn.add_css_class("task-min");
-                }
-                btn.set_child(Some(&row));
-                let id = t.id;
-                {
-                    let atx = atx.clone();
-                    btn.connect_clicked(move |_| {
-                        let _ = atx.send(crate::taskbar::Action::Activate(id));
-                    });
-                }
-                {
-                    let atx = atx.clone();
-                    let right = gtk::GestureClick::new();
-                    right.set_button(3); // right-click toggles minimize
-                    right.connect_pressed(move |_, _, _, _| {
-                        let _ = atx.send(crate::taskbar::Action::ToggleMinimize(id));
-                    });
-                    btn.add_controller(right);
-                }
-                list2.append(&btn);
+    let render: TaskbarRenderFn = Rc::new(move |tops| {
+        while let Some(child) = list2.first_child() {
+            list2.remove(&child);
+        }
+        for t in tops {
+            let row = GtkBox::new(Orientation::Horizontal, 4);
+            if let Some(img) = resolve_icon(&t.app_id) {
+                img.set_pixel_size(16);
+                row.append(&img);
             }
+            let text = if t.title.is_empty() {
+                t.app_id.clone()
+            } else {
+                t.title.clone()
+            };
+            let lbl = Label::new(Some(&text));
+            lbl.set_xalign(0.0);
+            lbl.set_hexpand(true);
+            lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            lbl.set_max_width_chars(1); // ellipsize within the bar width
+            row.append(&lbl);
+
+            let btn = gtk::Button::new();
+            btn.add_css_class("task");
+            if t.activated {
+                btn.add_css_class("task-active");
+            }
+            if t.minimized {
+                btn.add_css_class("task-min");
+            }
+            btn.set_child(Some(&row));
+            let id = t.id;
+            {
+                let atx = atx.clone();
+                btn.connect_clicked(move |_| {
+                    let _ = atx.send(crate::taskbar::Action::Activate(id));
+                });
+            }
+            {
+                let atx = atx.clone();
+                let right = gtk::GestureClick::new();
+                right.set_button(3); // right-click toggles minimize
+                right.connect_pressed(move |_, _, _, _| {
+                    let _ = atx.send(crate::taskbar::Action::ToggleMinimize(id));
+                });
+                btn.add_controller(right);
+            }
+            list2.append(&btn);
         }
     });
+    render(&host.latest.borrow());
+    *host.render.borrow_mut() = Some(render);
 
     Panel {
         root: root.upcast(),
