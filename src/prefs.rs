@@ -144,7 +144,11 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     let cur_len = cfg.bar.length;
     let cur_align = cfg.bar.align;
     let length_mode = DropDown::from_strings(&["full", "fixed (px)"]);
-    length_mode.set_selected(if matches!(cur_len, BarLength::Full) { 0 } else { 1 });
+    length_mode.set_selected(if matches!(cur_len, BarLength::Full) {
+        0
+    } else {
+        1
+    });
     let length_px = SpinButton::with_range(40.0, 8000.0, 10.0);
     length_px.set_value(match cur_len {
         BarLength::Px(n) => n as f64,
@@ -432,8 +436,7 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
         // Reject "default" and anything that isn't a strict slug (path-safe).
         if name == "default" || !crate::theme::is_valid_name(&name) {
             entry_c.set_text("");
-            entry_c
-                .set_placeholder_text(Some("use letters, digits, - or _ (not 'default')"));
+            entry_c.set_placeholder_text(Some("use letters, digits, - or _ (not 'default')"));
             return;
         }
         if let Err(e) = save_theme_file(&name, &h.theme.borrow()) {

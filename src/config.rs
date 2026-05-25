@@ -267,7 +267,10 @@ pub fn load() -> Config {
                 let _ = fs::create_dir_all(dir);
             }
             let _ = fs::write(&path, DEFAULT_TOML);
-            Config::default()
+            // Parse the file we just wrote so first launch matches every launch
+            // after (DEFAULT_TOML's per-panel intervals differ from the struct
+            // defaults used by default_panels()).
+            toml::from_str(DEFAULT_TOML).unwrap_or_else(|_| Config::default())
         }
     }
 }

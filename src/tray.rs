@@ -9,7 +9,7 @@ use system_tray::client::{ActivateRequest, Client, Event, UpdateEvent};
 use system_tray::item::{IconPixmap, StatusNotifierItem};
 use system_tray::menu::{MenuItem, MenuType, TrayMenu};
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct MenuEntry {
     pub id: i32,
     pub label: String,

@@ -103,6 +103,16 @@ impl Theme {
         let bar_bg = format!("rgba({br},{bg_},{bb},{:.3})", opacity.clamp(0.0, 1.0));
         let icon = lighten(&self.label, 0.12);
         let bright = lighten(&self.foreground, 0.3);
+        // Normalize every interpolated color through parse_hex → "#rrggbb" so a
+        // malformed theme value can't inject into or break the stylesheet, and
+        // strip CSS-significant chars from the font name.
+        let norm = |s: &str| {
+            let (r, g, b) = parse_hex(s);
+            format!("#{r:02x}{g:02x}{b:02x}")
+        };
+        let font = self
+            .font_family
+            .replace(['"', '\\', ';', '{', '}', '\n', '\r'], "");
         format!(
             r#"
 /* The bar window must be transparent, or our semi-transparent .bar fill
@@ -138,13 +148,13 @@ window.xerotop {{ background-color: transparent; }}
 .menu-item {{ background: transparent; border: none; box-shadow: none; color: {value}; padding: 4px 14px; }}
 .menu-item:hover {{ background-color: rgba(255,255,255,0.10); }}
 "#,
-            font = self.font_family,
-            label = self.label,
-            value = self.foreground,
-            muted = self.muted,
-            lock = self.accent_lock,
+            font = font,
+            label = norm(&self.label),
+            value = norm(&self.foreground),
+            muted = norm(&self.muted),
+            lock = norm(&self.accent_lock),
             lock_hi = lighten(&self.accent_lock, 0.25),
-            power = self.accent_power,
+            power = norm(&self.accent_power),
             power_hi = lighten(&self.accent_power, 0.25),
         )
     }

@@ -673,6 +673,8 @@ fn pixmap_texture(w: i32, h: i32, argb: &[u8]) -> Option<gtk::gdk::Texture> {
 /// Latest per-item menu trees, kept current by tray snapshots, so click/open can
 /// resolve an item's *current* id by its position even if the app renumbered.
 type MenuStore = Rc<RefCell<HashMap<String, Vec<crate::tray::MenuEntry>>>>;
+/// Rebuilds one menu level's rows from a given entry list.
+type MenuPopulate = Rc<dyn Fn(&[crate::tray::MenuEntry])>;
 
 /// Walk `path` (sequence of child indices) into the freshest menu tree for
 /// `addr` and return the current id at that position.
@@ -719,7 +721,7 @@ fn make_menu_popover(
     path: &[usize],
     autohide: bool,
     position: gtk::PositionType,
-) -> gtk::Popover {
+) -> (gtk::Popover, Rc<dyn Fn()>) {
     let pop = gtk::Popover::new();
     pop.set_autohide(autohide);
     pop.set_has_arrow(false);
@@ -727,118 +729,150 @@ fn make_menu_popover(
     pop.add_css_class("ctx-menu");
     let vbox = GtkBox::new(Orientation::Vertical, 0);
     vbox.add_css_class("menu");
+    pop.set_child(Some(&vbox));
 
     // child submenu open at this level (so hovering a sibling closes it)
     let cur_child: Rc<RefCell<Option<gtk::Popover>>> = Rc::new(RefCell::new(None));
 
-    for (i, e) in entries.iter().enumerate() {
-        if e.separator {
-            let rule = GtkBox::new(Orientation::Horizontal, 0);
-            rule.add_css_class("rule");
-            rule.set_size_request(-1, 1);
-            vbox.append(&rule);
-            continue;
+    // (Re)build the rows for this level from a given entry list. Called once now,
+    // and again by `rebuild` when a fresher layout snapshot arrives.
+    let atx_p = atx.clone();
+    let addr_p = addr.to_string();
+    let mp_p = mp.to_string();
+    let dismiss_p = dismiss.clone();
+    let store_p = store.clone();
+    let path_p = path.to_vec();
+    let vbox_p = vbox.clone();
+    let cur_p = cur_child.clone();
+    let populate: MenuPopulate = Rc::new(move |entries| {
+        if let Some(c) = cur_p.borrow_mut().take() {
+            c.popdown();
         }
-        let mut item_path = path.to_vec();
-        item_path.push(i);
-
-        let row = gtk::Button::new();
-        row.add_css_class("menu-item");
-        row.set_sensitive(e.enabled);
-        let rb = GtkBox::new(Orientation::Horizontal, 8);
-        let lbl = Label::new(Some(&e.label));
-        lbl.set_xalign(0.0);
-        lbl.set_hexpand(true);
-        rb.append(&lbl);
-        if !e.children.is_empty() {
-            let arrow = Label::new(Some("\u{203a}")); // ›
-            rb.append(&arrow);
+        while let Some(ch) = vbox_p.first_child() {
+            vbox_p.remove(&ch);
         }
-        row.set_child(Some(&rb));
+        for (i, e) in entries.iter().enumerate() {
+            if e.separator {
+                let rule = GtkBox::new(Orientation::Horizontal, 0);
+                rule.add_css_class("rule");
+                rule.set_size_request(-1, 1);
+                vbox_p.append(&rule);
+                continue;
+            }
+            let mut item_path = path_p.clone();
+            item_path.push(i);
 
-        if e.children.is_empty() {
-            let atx = atx.clone();
-            let addr_s = addr.to_string();
-            let mp_s = mp.to_string();
-            let cached = e.id;
-            let store_c = store.clone();
-            let ipath = item_path.clone();
-            let dismiss2 = dismiss.clone();
-            row.connect_clicked(move |_| {
-                let id = resolve_menu_id(&store_c, &addr_s, &ipath).unwrap_or(cached);
-                let _ = atx.try_send(crate::tray::TrayAction::MenuClick(
-                    addr_s.clone(),
-                    mp_s.clone(),
-                    id,
-                ));
-                dismiss2();
-            });
-            // hovering a leaf closes any open sibling submenu
-            let cur = cur_child.clone();
-            let motion = gtk::EventControllerMotion::new();
-            motion.connect_enter(move |_, _, _| {
-                if let Some(old) = cur.borrow_mut().take() {
-                    old.popdown();
-                }
-            });
-            row.add_controller(motion);
-        } else {
-            let children = e.children.clone();
-            let atx_c = atx.clone();
-            let addr_c = addr.to_string();
-            let mp_c = mp.to_string();
-            let dismiss_c = dismiss.clone();
-            let store_c = store.clone();
-            let ipath = item_path.clone();
-            let cur = cur_child.clone();
-            let row_weak = row.downgrade();
-            let sub_cached = e.id;
-            let open_child = move || {
-                if cur.borrow().is_some() {
-                    return; // already open
-                }
-                let Some(rw) = row_weak.upgrade() else {
-                    return;
+            let row = gtk::Button::new();
+            row.add_css_class("menu-item");
+            row.set_sensitive(e.enabled);
+            let rb = GtkBox::new(Orientation::Horizontal, 8);
+            let lbl = Label::new(Some(&e.label));
+            lbl.set_xalign(0.0);
+            lbl.set_hexpand(true);
+            rb.append(&lbl);
+            if !e.children.is_empty() {
+                let arrow = Label::new(Some("\u{203a}")); // ›
+                rb.append(&arrow);
+            }
+            row.set_child(Some(&rb));
+
+            if e.children.is_empty() {
+                let atx = atx_p.clone();
+                let addr_s = addr_p.clone();
+                let mp_s = mp_p.clone();
+                let cached = e.id;
+                let store_c = store_p.clone();
+                let ipath = item_path.clone();
+                let dismiss2 = dismiss_p.clone();
+                row.connect_clicked(move |_| {
+                    let id = resolve_menu_id(&store_c, &addr_s, &ipath).unwrap_or(cached);
+                    let _ = atx.try_send(crate::tray::TrayAction::MenuClick(
+                        addr_s.clone(),
+                        mp_s.clone(),
+                        id,
+                    ));
+                    dismiss2();
+                });
+                let cur = cur_p.clone();
+                let motion = gtk::EventControllerMotion::new();
+                motion.connect_enter(move |_, _, _| {
+                    if let Some(old) = cur.borrow_mut().take() {
+                        old.popdown();
+                    }
+                });
+                row.add_controller(motion);
+            } else {
+                let children = e.children.clone();
+                let atx_c = atx_p.clone();
+                let addr_c = addr_p.clone();
+                let mp_c = mp_p.clone();
+                let dismiss_c = dismiss_p.clone();
+                let store_c = store_p.clone();
+                let ipath = item_path.clone();
+                let cur = cur_p.clone();
+                let row_weak = row.downgrade();
+                let sub_cached = e.id;
+                let open_child = move || {
+                    if cur.borrow().is_some() {
+                        return; // already open
+                    }
+                    let Some(rw) = row_weak.upgrade() else {
+                        return;
+                    };
+                    let sid = resolve_menu_id(&store_c, &addr_c, &ipath).unwrap_or(sub_cached);
+                    let _ = atx_c.try_send(crate::tray::TrayAction::AboutToShow(
+                        addr_c.clone(),
+                        mp_c.clone(),
+                        sid,
+                    ));
+                    let fresh = resolve_menu_entries(&store_c, &addr_c, &ipath)
+                        .unwrap_or_else(|| children.clone());
+                    let (child, _) = make_menu_popover(
+                        &fresh,
+                        &atx_c,
+                        &addr_c,
+                        &mp_c,
+                        &dismiss_c,
+                        &store_c,
+                        &ipath,
+                        false,
+                        gtk::PositionType::Right,
+                    );
+                    // Parent to the submenu row (inside this popover) so GTK
+                    // treats it as a nested sub-popover — the root won't autohide
+                    // and eat clicks made inside the child.
+                    child.set_parent(&rw);
+                    child.popup();
+                    cur.replace(Some(child));
                 };
-                let sid = resolve_menu_id(&store_c, &addr_c, &ipath).unwrap_or(sub_cached);
-                // tell the app this submenu is opening so it honors its items
-                let _ = atx_c.try_send(crate::tray::TrayAction::AboutToShow(
-                    addr_c.clone(),
-                    mp_c.clone(),
-                    sid,
-                ));
-                // Freshest children for this submenu, not the tree captured when
-                // this level was built (lazily-populated submenus).
-                let fresh = resolve_menu_entries(&store_c, &addr_c, &ipath)
-                    .unwrap_or_else(|| children.clone());
-                let child = make_menu_popover(
-                    &fresh,
-                    &atx_c,
-                    &addr_c,
-                    &mp_c,
-                    &dismiss_c,
-                    &store_c,
-                    &ipath,
-                    false,
-                    gtk::PositionType::Right,
-                );
-                // Parent to the submenu row (inside this popover) so GTK treats
-                // it as a nested sub-popover — the root won't autohide and eat
-                // clicks made inside the child.
-                child.set_parent(&rw);
-                child.popup();
-                cur.replace(Some(child));
-            };
-            let on_enter = open_child.clone();
-            let motion = gtk::EventControllerMotion::new();
-            motion.connect_enter(move |_, _, _| on_enter());
-            row.add_controller(motion);
-            row.connect_clicked(move |_| open_child());
+                let on_enter = open_child.clone();
+                let motion = gtk::EventControllerMotion::new();
+                motion.connect_enter(move |_, _, _| on_enter());
+                row.add_controller(motion);
+                row.connect_clicked(move |_| open_child());
+            }
+            vbox_p.append(&row);
         }
-        vbox.append(&row);
-    }
+    });
 
-    pop.set_child(Some(&vbox));
+    populate(entries);
+
+    // Repopulate from the freshest layout when called, but only if the tree at
+    // this path actually changed (so icon-only snapshots don't thrash the menu).
+    let last: Rc<RefCell<Vec<crate::tray::MenuEntry>>> = Rc::new(RefCell::new(entries.to_vec()));
+    let store_r = store.clone();
+    let addr_r = addr.to_string();
+    let path_r = path.to_vec();
+    let populate_r = populate.clone();
+    let rebuild: Rc<dyn Fn()> = Rc::new(move || {
+        if let Some(fresh) = resolve_menu_entries(&store_r, &addr_r, &path_r)
+            && *last.borrow() != fresh
+        {
+            populate_r(&fresh);
+            *last.borrow_mut() = fresh;
+        }
+    });
+
     let cur2 = cur_child.clone();
     pop.connect_closed(move |p| {
         if let Some(c) = cur2.borrow_mut().take() {
@@ -846,7 +880,7 @@ fn make_menu_popover(
         }
         p.unparent();
     });
-    pop
+    (pop, rebuild)
 }
 
 // The tray and taskbar each talk to a background host thread (D-Bus / Wayland).
@@ -859,6 +893,9 @@ fn make_menu_popover(
 type TrayItems = Vec<crate::tray::TrayItem>;
 type TrayRenderFn = Rc<dyn Fn(&[crate::tray::TrayItem])>;
 type TrayRender = Rc<RefCell<Option<TrayRenderFn>>>;
+/// Rebuild closure for the currently-open tray menu, if any (refreshed on each
+/// snapshot so a lazily-populated menu fills in after AboutToShow).
+type OpenMenu = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
 
 #[derive(Clone)]
 struct TrayHost {
@@ -866,6 +903,7 @@ struct TrayHost {
     latest: Rc<RefCell<TrayItems>>,
     render: TrayRender,
     store: MenuStore,
+    open: OpenMenu,
 }
 
 thread_local! {
@@ -882,9 +920,14 @@ fn tray_host() -> TrayHost {
                 latest: Rc::new(RefCell::new(Vec::new())),
                 render: Rc::new(RefCell::new(None)),
                 store: Rc::new(RefCell::new(HashMap::new())),
+                open: Rc::new(RefCell::new(None)),
             };
-            let (latest, render, store) =
-                (host.latest.clone(), host.render.clone(), host.store.clone());
+            let (latest, render, store, open) = (
+                host.latest.clone(),
+                host.render.clone(),
+                host.store.clone(),
+                host.open.clone(),
+            );
             gtk::glib::spawn_future_local(async move {
                 while let Ok(items) = rx.recv().await {
                     // freshest menu trees so clicks resolve current ids
@@ -897,7 +940,15 @@ fn tray_host() -> TrayHost {
                     if let Some(cb) = cb {
                         cb(&items);
                     }
+                    // Refresh an open menu if its layout changed (no-op otherwise).
+                    let reb = open.borrow().clone();
+                    if let Some(reb) = reb {
+                        reb();
+                    }
                 }
+                // Host thread exited (e.g. D-Bus connect failed): forget it so a
+                // later apply() respawns instead of being stuck forever.
+                TRAY_HOST.with(|c| *c.borrow_mut() = None);
             });
             *cell.borrow_mut() = Some(host);
         }
@@ -919,6 +970,7 @@ fn tray_panel() -> Panel {
     let host = tray_host();
     let atx = host.atx.clone();
     let store = host.store.clone();
+    let open = host.open.clone();
     let flow2 = flow.clone();
     let root2 = root.clone(); // stable popover parent for this panel instance
 
@@ -951,6 +1003,7 @@ fn tray_panel() -> Panel {
                 let btn_weak = btn.downgrade();
                 let parent = root2.clone();
                 let store_g = store.clone();
+                let open_g = open.clone();
                 let gesture = gtk::GestureClick::new();
                 gesture.set_button(3);
                 gesture.connect_pressed(move |_, _, _, _| {
@@ -975,9 +1028,9 @@ fn tray_panel() -> Panel {
                     };
                     // Render from the freshest layout snapshot, not the tree
                     // captured at panel-build time (apps populate menus lazily).
-                    let fresh =
-                        resolve_menu_entries(&store_g, &addr, &[]).unwrap_or_else(|| entries.clone());
-                    let pop = make_menu_popover(
+                    let fresh = resolve_menu_entries(&store_g, &addr, &[])
+                        .unwrap_or_else(|| entries.clone());
+                    let (pop, rebuild) = make_menu_popover(
                         &fresh,
                         &atx,
                         &addr,
@@ -997,6 +1050,14 @@ fn tray_panel() -> Panel {
                             b.height() as i32,
                         )));
                     }
+                    // Register this menu's rebuild so later snapshots can refresh
+                    // it (e.g. lazily-populated content after AboutToShow); clear
+                    // it when the menu closes.
+                    open_g.replace(Some(rebuild));
+                    let open_c = open_g.clone();
+                    pop.connect_closed(move |_| {
+                        open_c.borrow_mut().take();
+                    });
                     root_holder.replace(Some(pop.clone()));
                     pop.popup();
                 });
@@ -1050,6 +1111,8 @@ fn taskbar_host() -> TaskbarHost {
                         cb(&tops);
                     }
                 }
+                // Wayland listener exited: forget the host so apply() can respawn.
+                TASKBAR_HOST.with(|c| *c.borrow_mut() = None);
             });
             *cell.borrow_mut() = Some(host);
         }
