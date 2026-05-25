@@ -210,12 +210,17 @@ fn install_context_menu(handle: &BarHandle, root: &GtkBox) {
     let h = handle.clone();
     let root_w = root.clone();
     gesture.connect_pressed(move |_, _, x, y| {
-        // Only over dead space: if the click landed on a button (taskbar/tray/
-        // header control), let that widget handle its own right-click instead.
+        // Only over dead space: if the click landed inside an interactive panel
+        // (a button, a meter with its own scroll/right-click, or the tray/taskbar
+        // areas where icons can be misclicked), let that panel own the click.
         if let Some(picked) = root_w.pick(x, y, gtk::PickFlags::DEFAULT) {
             let mut w = Some(picked);
             while let Some(cur) = w {
-                if cur.downcast_ref::<gtk::Button>().is_some() {
+                if cur.downcast_ref::<gtk::Button>().is_some()
+                    || cur.has_css_class("meter")
+                    || cur.has_css_class("tray")
+                    || cur.has_css_class("taskbar")
+                {
                     return;
                 }
                 w = cur.parent();
