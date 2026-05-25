@@ -7,6 +7,7 @@ mod config;
 mod metrics;
 mod panels;
 mod power;
+mod prefs;
 mod taskbar;
 mod theme;
 mod tray;

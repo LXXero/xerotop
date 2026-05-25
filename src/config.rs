@@ -2,11 +2,11 @@
 //! just data. Missing fields fall back to sane defaults; a starter file is
 //! written on first run.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Edge {
     Left,
@@ -23,7 +23,7 @@ impl Edge {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BarConfig {
     pub edge: Edge,
@@ -52,7 +52,7 @@ impl Default for BarConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PowerConfig {
     /// On battery, every panel's interval is multiplied by this (battery-first).
@@ -68,7 +68,7 @@ impl Default for PowerConfig {
 }
 
 /// Shell commands run by the header buttons (one-shot, on click — not polled).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Actions {
     pub lock: String,
@@ -88,7 +88,7 @@ impl Default for Actions {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PanelConfig {
     #[serde(rename = "type")]
     pub kind: String,
@@ -141,7 +141,7 @@ fn default_panels() -> Vec<PanelConfig> {
     .collect()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Name of the theme to load (`themes/<name>.toml`); "default" = built-in.
     #[serde(default = "default_theme")]

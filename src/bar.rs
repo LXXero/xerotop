@@ -180,11 +180,68 @@ pub fn build(app: &Application, cfg: Config) -> BarHandle {
         window: window.clone(),
         cfg: Rc::new(RefCell::new(cfg)),
         theme: Rc::new(RefCell::new(theme)),
-        root,
+        root: root.clone(),
         theme_css,
         generation: Rc::new(Cell::new(0)),
     };
     handle.apply();
+    install_context_menu(&handle, &root);
     window.present();
     handle
+}
+
+/// gkrellm-style: right-click any dead space on the bar to get a small menu
+/// (Preferences / Quit). Right-clicks consumed by interactive panels (e.g. tray
+/// items, which have their own button-3 menus) don't reach this.
+fn install_context_menu(handle: &BarHandle, root: &GtkBox) {
+    let gesture = gtk::GestureClick::new();
+    gesture.set_button(3); // right button
+    let h = handle.clone();
+    let root_w = root.clone();
+    gesture.connect_pressed(move |_, _, x, y| {
+        // Only over dead space: if the click landed on a button (taskbar/tray/
+        // header control), let that widget handle its own right-click instead.
+        if let Some(picked) = root_w.pick(x, y, gtk::PickFlags::DEFAULT) {
+            let mut w = Some(picked);
+            while let Some(cur) = w {
+                if cur.downcast_ref::<gtk::Button>().is_some() {
+                    return;
+                }
+                w = cur.parent();
+            }
+        }
+
+        let popover = gtk::Popover::new();
+        popover.set_has_arrow(false);
+        popover.set_parent(&root_w);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+
+        let menu = GtkBox::new(Orientation::Vertical, 0);
+        menu.add_css_class("menu");
+        let prefs = gtk::Button::with_label("Preferences");
+        prefs.add_css_class("menu-item");
+        let quit = gtk::Button::with_label("Quit xerotop");
+        quit.add_css_class("menu-item");
+        menu.append(&prefs);
+        menu.append(&quit);
+        popover.set_child(Some(&menu));
+
+        let h2 = h.clone();
+        let pop = popover.clone();
+        prefs.connect_clicked(move |_| {
+            pop.popdown();
+            crate::prefs::open(&h2);
+        });
+        let h3 = h.clone();
+        let pop = popover.clone();
+        quit.connect_clicked(move |_| {
+            pop.popdown();
+            if let Some(app) = h3.window.application() {
+                app.quit();
+            }
+        });
+        popover.connect_closed(|p| p.unparent());
+        popover.popup();
+    });
+    root.add_controller(gesture);
 }

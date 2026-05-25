@@ -8,7 +8,7 @@ alsa = "0.11.0"
 async-channel = "2.5.0"
 calloop = "0.14.4"
 calloop-wayland-source = "0.4.1"
-gtk = { version = "0.10", package = "gtk4" }
+gtk = { version = "0.10", package = "gtk4", features = ["v4_10"] }
 gtk4-layer-shell = "0.6"
 libc = "0.2.186"
 serde = { version = "1.0.228", features = ["derive"] }

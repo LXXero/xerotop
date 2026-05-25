@@ -5,10 +5,10 @@
 //! original dark look.
 
 use crate::widgets::Rgba;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Theme {
     /// Base font for the whole bar (Nerd Font recommended for the glyphs).
