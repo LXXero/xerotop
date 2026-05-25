@@ -134,6 +134,107 @@ fn read_temp_input(dir: &Path) -> Option<f64> {
     None
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SensorKind {
+    Temp,
+    Fan,
+}
+
+/// A discovered hwmon sensor (temperature or fan).
+pub struct SensorInfo {
+    pub chip: String,          // hwmon `name`, e.g. "k10temp"
+    pub input: String,         // e.g. "temp1" or "fan1"
+    pub label: Option<String>, // hwmon `<input>_label`, e.g. "Tctl"
+    pub kind: SensorKind,
+    pub value: f64, // °C for temps, rpm for fans
+}
+
+fn input_kind(input: &str) -> SensorKind {
+    if input.starts_with("fan") {
+        SensorKind::Fan
+    } else {
+        SensorKind::Temp
+    }
+}
+
+fn read_input(dir: &Path, input: &str) -> Option<f64> {
+    let v: f64 = fs::read_to_string(dir.join(format!("{input}_input")))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    Some(match input_kind(input) {
+        SensorKind::Temp => v / 1000.0,
+        SensorKind::Fan => v,
+    })
+}
+
+fn hwmon_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs: Vec<_> = fs::read_dir("/sys/class/hwmon")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    dirs.sort();
+    dirs
+}
+
+/// Enumerate every readable hwmon temp/fan input with its chip name and label.
+pub fn list_sensors() -> Vec<SensorInfo> {
+    let mut out = Vec::new();
+    for dir in hwmon_dirs() {
+        let chip = fs::read_to_string(dir.join("name"))
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if chip.is_empty() {
+            continue;
+        }
+        let Ok(rd) = fs::read_dir(&dir) else { continue };
+        let mut inputs: Vec<String> = rd
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| (n.starts_with("temp") || n.starts_with("fan")) && n.ends_with("_input"))
+            .map(|n| n.trim_end_matches("_input").to_string())
+            .collect();
+        inputs.sort();
+        for input in inputs {
+            let Some(value) = read_input(&dir, &input) else {
+                continue;
+            };
+            let label = fs::read_to_string(dir.join(format!("{input}_label")))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            out.push(SensorInfo {
+                chip: chip.clone(),
+                kind: input_kind(&input),
+                input,
+                label,
+                value,
+            });
+        }
+    }
+    out
+}
+
+/// Read a sensor by chip name + input (e.g. "k10temp","temp1"). Resolves by the
+/// chip's `name` because hwmonN numbers aren't stable across boots.
+pub fn read_sensor(chip: &str, input: &str) -> Option<f64> {
+    for dir in hwmon_dirs() {
+        if fs::read_to_string(dir.join("name"))
+            .unwrap_or_default()
+            .trim()
+            == chip
+            && let Some(v) = read_input(&dir, input)
+        {
+            return Some(v);
+        }
+    }
+    None
+}
+
 /// (percent, status) of the first BAT* supply, if any (None on desktops).
 pub fn battery() -> Option<(f64, String)> {
     let entries = fs::read_dir("/sys/class/power_supply").ok()?;

@@ -4,7 +4,7 @@
 //! drag a slider or pick a color. "Save" persists config.toml / the theme file.
 
 use crate::bar::BarHandle;
-use crate::config::{Align, BarLength, Edge, Layer, PanelConfig};
+use crate::config::{Align, BarLength, Edge, Layer, PanelConfig, TempSensor};
 use crate::theme::{Theme, themes_dir};
 use gtk::gdk::RGBA;
 use gtk::glib;
@@ -39,6 +39,7 @@ pub fn open(handle: &BarHandle) {
     notebook.append_page(&general_page(handle), Some(&Label::new(Some("General"))));
     notebook.append_page(&theme_page(handle), Some(&Label::new(Some("Theme"))));
     notebook.append_page(&panels_page(handle), Some(&Label::new(Some("Panels"))));
+    notebook.append_page(&temp_page(handle), Some(&Label::new(Some("Temp"))));
 
     let window = Window::builder()
         .title("xerotop preferences")
@@ -685,6 +686,182 @@ fn panel_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> GtkBox {
         h.cfg.borrow_mut().panel.remove(i);
         h.apply();
         populate_panels(&h, &list_c);
+    });
+    r.append(&del);
+
+    r
+}
+
+// ---- Temp page -------------------------------------------------------------
+
+/// Default fill colors for newly-added sensors (cycled), matching the palette.
+const SENSOR_COLORS: [&str; 5] = ["#ff7366", "#c78cff", "#66ccff", "#66ff66", "#ffbf4d"];
+
+fn temp_page(handle: &BarHandle) -> GtkBox {
+    let page = page_box();
+    page.append(&Label::new(Some(
+        "Empty list = auto (cpu/gpu/ssd + fan). Add sensors below to customize.",
+    )));
+
+    // Average-of-temps row toggle.
+    let avg = CheckButton::with_label("Show an averaged 'avg' row");
+    avg.set_active(handle.cfg.borrow().temp.average);
+    let h = handle.clone();
+    avg.connect_toggled(move |c| {
+        h.cfg.borrow_mut().temp.average = c.is_active();
+        h.apply();
+    });
+    page.append(&avg);
+
+    let list = ListBox::new();
+    list.set_selection_mode(gtk::SelectionMode::None);
+    populate_temp_list(handle, &list);
+    page.append(&list);
+
+    // Add a discovered sensor.
+    let add_row = GtkBox::new(Orientation::Horizontal, 8);
+    add_row.set_margin_top(8);
+    let discovered = crate::metrics::list_sensors();
+    let ids: Vec<(String, String, String)> = discovered
+        .iter()
+        .map(|s| {
+            (
+                s.chip.clone(),
+                s.input.clone(),
+                s.label.clone().unwrap_or_default(),
+            )
+        })
+        .collect();
+    let labels: Vec<String> = discovered
+        .iter()
+        .map(|s| {
+            let v = match s.kind {
+                crate::metrics::SensorKind::Temp => format!("{:.0}°", s.value),
+                crate::metrics::SensorKind::Fan => format!("{:.0}rpm", s.value),
+            };
+            match &s.label {
+                Some(l) => format!("{}/{} {l} ({v})", s.chip, s.input),
+                None => format!("{}/{} ({v})", s.chip, s.input),
+            }
+        })
+        .collect();
+    let kinds = DropDown::from_strings(&labels.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+    add_row.append(&kinds);
+    let add = Button::with_label("Add sensor");
+    let h = handle.clone();
+    let list_c = list.clone();
+    add.connect_clicked(move |_| {
+        let Some((chip, input, label)) = ids.get(kinds.selected() as usize) else {
+            return;
+        };
+        let n = h.cfg.borrow().temp.sensors.len();
+        h.cfg.borrow_mut().temp.sensors.push(TempSensor {
+            chip: chip.clone(),
+            input: input.clone(),
+            label: label.clone(),
+            color: SENSOR_COLORS[n % SENSOR_COLORS.len()].to_string(),
+        });
+        h.apply();
+        populate_temp_list(&h, &list_c);
+    });
+    add_row.append(&add);
+    page.append(&add_row);
+
+    page.append(&save_bar(handle));
+    page
+}
+
+fn populate_temp_list(handle: &BarHandle, list: &ListBox) {
+    while let Some(c) = list.first_child() {
+        list.remove(&c);
+    }
+    let n = handle.cfg.borrow().temp.sensors.len();
+    for i in 0..n {
+        list.append(&temp_sensor_row(handle, list, i, n));
+    }
+}
+
+fn temp_sensor_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> GtkBox {
+    let (chip, input, label, color) = {
+        let cfg = handle.cfg.borrow();
+        let s = &cfg.temp.sensors[i];
+        (
+            s.chip.clone(),
+            s.input.clone(),
+            s.label.clone(),
+            s.color.clone(),
+        )
+    };
+    let r = GtkBox::new(Orientation::Horizontal, 6);
+    r.set_margin_top(2);
+    r.set_margin_bottom(2);
+
+    let id = Label::new(Some(&format!("{chip}/{input}")));
+    id.set_xalign(0.0);
+    id.set_width_chars(15);
+    id.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    r.append(&id);
+
+    let label_entry = Entry::new();
+    label_entry.set_text(&label);
+    label_entry.set_placeholder_text(Some("label"));
+    label_entry.set_width_chars(6);
+    label_entry.set_tooltip_text(Some("Press Enter to apply"));
+    let h = handle.clone();
+    label_entry.connect_changed(move |e| {
+        h.cfg.borrow_mut().temp.sensors[i].label = e.text().to_string();
+    });
+    let h = handle.clone();
+    label_entry.connect_activate(move |_| h.apply());
+    r.append(&label_entry);
+
+    let color_btn = ColorDialogButton::new(Some(ColorDialog::new()));
+    let init = if color.is_empty() {
+        SENSOR_COLORS[i % SENSOR_COLORS.len()]
+    } else {
+        &color
+    };
+    color_btn.set_rgba(&hex_to_rgba(init));
+    let h = handle.clone();
+    color_btn.connect_rgba_notify(move |b| {
+        h.cfg.borrow_mut().temp.sensors[i].color = rgba_to_hex(&b.rgba());
+        h.apply();
+    });
+    r.append(&color_btn);
+
+    let spacer = GtkBox::new(Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    r.append(&spacer);
+
+    let up = Button::from_icon_name("go-up-symbolic");
+    up.set_sensitive(i > 0);
+    let h = handle.clone();
+    let list_c = list.clone();
+    up.connect_clicked(move |_| {
+        h.cfg.borrow_mut().temp.sensors.swap(i, i - 1);
+        h.apply();
+        populate_temp_list(&h, &list_c);
+    });
+    r.append(&up);
+
+    let down = Button::from_icon_name("go-down-symbolic");
+    down.set_sensitive(i + 1 < n);
+    let h = handle.clone();
+    let list_c = list.clone();
+    down.connect_clicked(move |_| {
+        h.cfg.borrow_mut().temp.sensors.swap(i, i + 1);
+        h.apply();
+        populate_temp_list(&h, &list_c);
+    });
+    r.append(&down);
+
+    let del = Button::from_icon_name("user-trash-symbolic");
+    let h = handle.clone();
+    let list_c = list.clone();
+    del.connect_clicked(move |_| {
+        h.cfg.borrow_mut().temp.sensors.remove(i);
+        h.apply();
+        populate_temp_list(&h, &list_c);
     });
     r.append(&del);
 

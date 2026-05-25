@@ -152,6 +152,31 @@ impl Default for TrayConfig {
     }
 }
 
+/// One sensor shown in the TEMP panel, identified by hwmon chip name + input
+/// (stable across reboots, unlike hwmonN numbers).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TempSensor {
+    pub chip: String,  // hwmon `name`, e.g. "k10temp"
+    pub input: String, // "temp1" / "fan1"
+    /// Display label; empty → derived from the chip/hwmon label.
+    #[serde(default)]
+    pub label: String,
+    /// Fill color (hex `#rrggbb`); empty → a default from the palette.
+    #[serde(default)]
+    pub color: String,
+}
+
+/// TEMP panel sensor selection.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TempConfig {
+    /// Explicit sensor list. Empty → auto-detect cpu/gpu/ssd + first fan.
+    #[serde(rename = "sensor")]
+    pub sensors: Vec<TempSensor>,
+    /// Show an extra row averaging the selected temperatures.
+    pub average: bool,
+}
+
 /// Shell commands run by the header buttons (one-shot, on click — not polled).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -241,6 +266,8 @@ pub struct Config {
     #[serde(default)]
     pub tray: TrayConfig,
     #[serde(default)]
+    pub temp: TempConfig,
+    #[serde(default)]
     pub actions: Actions,
     #[serde(default = "default_panels")]
     pub panel: Vec<PanelConfig>,
@@ -257,6 +284,7 @@ impl Default for Config {
             bar: BarConfig::default(),
             power: PowerConfig::default(),
             tray: TrayConfig::default(),
+            temp: TempConfig::default(),
             actions: Actions::default(),
             panel: default_panels(),
         }

@@ -73,6 +73,7 @@ impl BarHandle {
         panels::set_gamma(cfg.bar.graph_gamma);
         panels::set_palette(theme.palette());
         panels::set_tray(cfg.tray.columns, cfg.tray.icon_size);
+        panels::set_temp_config(cfg.temp.clone());
 
         // Generate the whole stylesheet from the theme (colors + font); the bar
         // background alpha comes from config opacity.

@@ -1188,93 +1188,186 @@ fn taskbar_panel() -> Panel {
     }
 }
 
-type TempSrc = fn() -> Option<f64>;
+thread_local! {
+    /// Sensor selection for the TEMP panel (empty = auto-detect).
+    static TEMP_CFG: RefCell<crate::config::TempConfig> =
+        RefCell::new(crate::config::TempConfig::default());
+}
 
-/// TEMP: multiple sensors (cpu/gpu/ssd) as compact mini line-charts + a fan row.
+/// Set the TEMP panel sensor config. Call before (re)building panels.
+pub fn set_temp_config(c: crate::config::TempConfig) {
+    TEMP_CFG.with(|t| *t.borrow_mut() = c);
+}
+
+/// Parse a `#rrggbb` fill color, falling back to the palette's red.
+fn hex_rgba(hex: &str) -> Rgba {
+    let h = hex.trim().trim_start_matches('#');
+    if h.len() == 6 {
+        let p = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).unwrap_or(128) as f64 / 255.0;
+        (p(0), p(2), p(4), 0.9)
+    } else {
+        pal().red
+    }
+}
+
+type TempSrc = Box<dyn Fn() -> Option<f64>>;
+
+struct TempRow {
+    bar: Option<Bar>,
+    graph: Option<Graph>,
+    val: Label,
+    src: TempSrc,
+    is_temp: bool,
+}
+
+/// TEMP panel: configurable temp/fan sensors as bar + value + trend, with an
+/// optional averaged row. Empty config = auto-detect cpu/gpu/ssd + first fan.
 fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
+    let cfg = TEMP_CFG.with(|c| c.borrow().clone());
     let root = panel_box();
     let head = Label::new(Some("TEMP"));
     head.add_css_class("label");
     head.set_xalign(0.0);
     root.append(&head);
 
-    let sensors: [(&str, TempSrc, Rgba); 3] = [
-        ("cpu", temp_cpu, pal().red),
-        ("gpu", temp_gpu, pal().violet),
-        ("ssd", temp_ssd, pal().cyan),
-    ];
-    // Each row: label · level bar (0..~100°C) · value · mini trend graph.
-    let mut rows: Vec<(Bar, Option<Graph>, Label, TempSrc)> = Vec::new();
-    for (name, src, color) in sensors {
+    // (label, is_temp, color, value source) for each row, in display order.
+    let mut specs: Vec<(String, bool, Rgba, TempSrc)> = Vec::new();
+    if cfg.sensors.is_empty() {
+        specs.push(("cpu".into(), true, pal().red, Box::new(temp_cpu)));
+        specs.push(("gpu".into(), true, pal().violet, Box::new(temp_gpu)));
+        specs.push(("ssd".into(), true, pal().cyan, Box::new(temp_ssd)));
+        specs.push(("fan".into(), false, pal().amber, Box::new(fan_rpm)));
+    } else {
+        let defaults = [
+            pal().red,
+            pal().violet,
+            pal().cyan,
+            pal().green,
+            pal().amber,
+        ];
+        for (i, s) in cfg.sensors.iter().enumerate() {
+            let is_temp = !s.input.starts_with("fan");
+            let label = if s.label.is_empty() {
+                s.chip.clone()
+            } else {
+                s.label.clone()
+            };
+            let color = if s.color.is_empty() {
+                defaults[i % defaults.len()]
+            } else {
+                hex_rgba(&s.color)
+            };
+            let (chip, input) = (s.chip.clone(), s.input.clone());
+            let src: TempSrc = Box::new(move || crate::metrics::read_sensor(&chip, &input));
+            specs.push((label, is_temp, color, src));
+        }
+    }
+
+    let make_row = |label: &str, is_temp: bool, color: Rgba, src: TempSrc| -> TempRow {
         let row = GtkBox::new(Orientation::Horizontal, 4);
-        let lbl = Label::new(Some(name));
+        let lbl = Label::new(Some(label));
         lbl.add_css_class("sub");
         lbl.set_xalign(0.0);
         lbl.set_width_chars(3);
-
-        let bar = Bar::new(0, BAR_H, 100.0, color);
-        bar.area.set_hexpand(true);
-        bar.area.set_valign(gtk::Align::Center);
+        row.append(&lbl);
 
         let val = Label::new(Some("--"));
         val.add_css_class("value");
         val.set_xalign(1.0);
-        val.set_width_chars(3);
+        val.set_width_chars(if is_temp { 3 } else { 5 });
 
-        // Trend graph — dynamic min..max amplifies the small swings temps have.
-        let g = graph.then(|| {
-            let g = Graph::new(
-                30,
-                MINI_H,
-                GraphScale::DynamicRange,
-                1.0,
-                &[(color, true)],
-                interval,
-                smooth,
-                6.0, // °C floor so a steady sensor still shows a centered line
-            );
-            g.area.set_valign(gtk::Align::Center);
-            g
-        });
-
-        row.append(&lbl);
-        row.append(&bar.area);
-        row.append(&val);
-        if let Some(g) = &g {
-            row.append(&g.area);
-        }
+        let (bar, g) = if is_temp {
+            let bar = Bar::new(0, BAR_H, 100.0, color);
+            bar.area.set_hexpand(true);
+            bar.area.set_valign(gtk::Align::Center);
+            row.append(&bar.area);
+            row.append(&val);
+            let g = graph.then(|| {
+                let g = Graph::new(
+                    30,
+                    MINI_H,
+                    GraphScale::DynamicRange,
+                    1.0,
+                    &[(color, true)],
+                    interval,
+                    smooth,
+                    6.0, // °C floor so a steady sensor still shows a centered line
+                );
+                g.area.set_valign(gtk::Align::Center);
+                row.append(&g.area);
+                g
+            });
+            (Some(bar), g)
+        } else {
+            // Fan: just label + rpm, no bar/graph.
+            let sp = GtkBox::new(Orientation::Horizontal, 0);
+            sp.set_hexpand(true);
+            row.append(&sp);
+            row.append(&val);
+            (None, None)
+        };
         root.append(&row);
-        rows.push((bar, g, val, src));
-    }
+        TempRow {
+            bar,
+            graph: g,
+            val,
+            src,
+            is_temp,
+        }
+    };
 
-    let fanrow = GtkBox::new(Orientation::Horizontal, 4);
-    let fanlbl = Label::new(Some("fan"));
-    fanlbl.add_css_class("sub");
-    fanlbl.set_xalign(0.0);
-    fanlbl.set_hexpand(true);
-    let fanval = Label::new(Some("--"));
-    fanval.add_css_class("value");
-    fanval.set_xalign(1.0);
-    fanrow.append(&fanlbl);
-    fanrow.append(&fanval);
-    root.append(&fanrow);
+    let mut rows: Vec<TempRow> = specs
+        .into_iter()
+        .map(|(label, is_temp, color, src)| make_row(&label, is_temp, color, src))
+        .collect();
+
+    // Optional average-of-temps row.
+    let avg = (cfg.average && rows.iter().any(|r| r.is_temp))
+        .then(|| make_row("avg", true, pal().green, Box::new(|| None)));
+    if let Some(a) = avg {
+        rows.push(a);
+    }
+    let avg_enabled = cfg.average;
 
     let update = Box::new(move || {
-        for (bar, g, val, src) in &rows {
-            match src() {
-                Some(t) => {
-                    val.set_text(&format!("{t:.0}\u{00b0}"));
-                    bar.set(t);
-                    if let Some(g) = g {
-                        g.push(&[t]);
+        let mut temps: Vec<f64> = Vec::new();
+        // Skip the trailing avg row in the main loop; fill it after.
+        let real = if avg_enabled && !rows.is_empty() {
+            rows.len() - 1
+        } else {
+            rows.len()
+        };
+        for row in &rows[..real] {
+            match (row.src)() {
+                Some(v) => {
+                    if row.is_temp {
+                        row.val.set_text(&format!("{v:.0}\u{00b0}"));
+                        temps.push(v);
+                    } else {
+                        row.val.set_text(&format!("{v:.0}"));
+                    }
+                    if let Some(b) = &row.bar {
+                        b.set(v);
+                    }
+                    if let Some(g) = &row.graph {
+                        g.push(&[v]);
                     }
                 }
-                None => val.set_text("--"),
+                None => row.val.set_text("--"),
             }
         }
-        match fan_rpm() {
-            Some(r) => fanval.set_text(&format!("{r:.0}")),
-            None => fanval.set_text("--"),
+        if avg_enabled
+            && let Some(a) = rows.last()
+            && !temps.is_empty()
+        {
+            let v = temps.iter().sum::<f64>() / temps.len() as f64;
+            a.val.set_text(&format!("{v:.0}\u{00b0}"));
+            if let Some(b) = &a.bar {
+                b.set(v);
+            }
+            if let Some(g) = &a.graph {
+                g.push(&[v]);
+            }
         }
     });
     Panel {
