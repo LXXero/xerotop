@@ -207,7 +207,14 @@ impl Bar {
             let fw = w * frac;
             if fw > 0.5 {
                 rounded_rect(cr, 0.0, 0.0, fw, h, h / 2.0);
-                cr.set_source_rgba(r, g, b, a);
+                // Glossy vertical gradient (bright top → base → darker bottom) for
+                // a neon-tube sheen matching the filled history graphs.
+                let lite = |c: f64| (c + (1.0 - c) * 0.55).min(1.0);
+                let grad = gtk::cairo::LinearGradient::new(0.0, 0.0, 0.0, h);
+                grad.add_color_stop_rgba(0.0, lite(r), lite(g), lite(b), a);
+                grad.add_color_stop_rgba(0.5, r, g, b, a);
+                grad.add_color_stop_rgba(1.0, r * 0.55, g * 0.55, b * 0.55, a);
+                let _ = cr.set_source(&grad);
                 let _ = cr.fill();
             }
         });
