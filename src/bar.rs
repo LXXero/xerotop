@@ -3,7 +3,7 @@
 //! in-memory `Config` whenever `BarHandle::apply` is called, so the prefs GUI
 //! can change anything live without restarting.
 
-use crate::config::{Config, Edge};
+use crate::config::{Align, BarLength as Length, Config, Edge};
 use crate::panels::{self, Panel};
 use crate::power;
 use crate::theme::Theme;
@@ -29,35 +29,30 @@ pub struct BarHandle {
     generation: Rc<Cell<u64>>,
 }
 
-/// Which layer-shell edges to anchor for a given bar edge: the chosen edge plus
-/// the two perpendicular ones (so the bar spans the full side), opposite off.
-fn anchors(edge: Edge) -> [(LsEdge, bool); 4] {
+/// The layer-shell edges relative to a bar edge: (main, opposite, start, end).
+/// `start`/`end` are the two perpendicular edges (top/bottom for a vertical bar,
+/// left/right for a horizontal one).
+fn edges(edge: Edge) -> (LsEdge, LsEdge, LsEdge, LsEdge) {
     match edge {
-        Edge::Right => [
-            (LsEdge::Right, true),
-            (LsEdge::Top, true),
-            (LsEdge::Bottom, true),
-            (LsEdge::Left, false),
-        ],
-        Edge::Left => [
-            (LsEdge::Left, true),
-            (LsEdge::Top, true),
-            (LsEdge::Bottom, true),
-            (LsEdge::Right, false),
-        ],
-        Edge::Top => [
-            (LsEdge::Top, true),
-            (LsEdge::Left, true),
-            (LsEdge::Right, true),
-            (LsEdge::Bottom, false),
-        ],
-        Edge::Bottom => [
-            (LsEdge::Bottom, true),
-            (LsEdge::Left, true),
-            (LsEdge::Right, true),
-            (LsEdge::Top, false),
-        ],
+        Edge::Right => (LsEdge::Right, LsEdge::Left, LsEdge::Top, LsEdge::Bottom),
+        Edge::Left => (LsEdge::Left, LsEdge::Right, LsEdge::Top, LsEdge::Bottom),
+        Edge::Top => (LsEdge::Top, LsEdge::Bottom, LsEdge::Left, LsEdge::Right),
+        Edge::Bottom => (LsEdge::Bottom, LsEdge::Top, LsEdge::Left, LsEdge::Right),
     }
+}
+
+/// The monitor the bar targets (configured index, else the first), for geometry.
+fn target_monitor(cfg: &Config) -> Option<gtk::gdk::Monitor> {
+    let monitors = gtk::gdk::Display::default()?.monitors();
+    let idx = if cfg.bar.monitor >= 0 {
+        cfg.bar.monitor as u32
+    } else {
+        0
+    };
+    monitors
+        .item(idx)
+        .and_downcast::<gtk::gdk::Monitor>()
+        .or_else(|| monitors.item(0).and_downcast::<gtk::gdk::Monitor>())
 }
 
 impl BarHandle {
@@ -74,31 +69,50 @@ impl BarHandle {
         self.theme_css.load_from_data(&theme.css(cfg.bar.opacity));
         drop(theme);
 
-        // Pin to the configured output if it exists; monitor < 0 (or out of
-        // range) means "let the compositor decide".
+        let monitor = target_monitor(&cfg);
+        // Pin to the configured output if requested; monitor < 0 = compositor's
+        // choice (but we still use the first output's geometry for full length).
         if cfg.bar.monitor >= 0
-            && let Some(display) = gtk::gdk::Display::default()
-            && let Some(monitor) = display
-                .monitors()
-                .item(cfg.bar.monitor as u32)
-                .and_downcast::<gtk::gdk::Monitor>()
+            && let Some(m) = &monitor
         {
-            self.window.set_monitor(Some(&monitor));
+            self.window.set_monitor(Some(m));
         }
 
-        // Edge → anchors, orientation and thickness.
         let edge = cfg.bar.edge;
         let horizontal = edge.is_horizontal();
-        for (e, on) in anchors(edge) {
-            self.window.set_anchor(e, on);
-        }
+        let (main, opp, start, end) = edges(edge);
+
+        // Long-axis length: a fixed pixel count, or the monitor's full extent.
+        // We size it explicitly (rather than relying on both-edge anchoring to
+        // stretch) because the window is non-resizable — see build().
+        let full_len = monitor.as_ref().map(|m| {
+            let g = m.geometry();
+            if horizontal { g.width() } else { g.height() }
+        });
+        let (length_px, anchor_start, anchor_end) = match cfg.bar.length {
+            Length::Full => (full_len.filter(|&v| v > 0).unwrap_or(-1), true, true),
+            Length::Px(n) => {
+                let (s, e) = match cfg.bar.align {
+                    Align::Start => (true, false),
+                    Align::End => (false, true),
+                    Align::Center => (false, false),
+                };
+                (n, s, e)
+            }
+        };
+
+        self.window.set_anchor(main, true);
+        self.window.set_anchor(opp, false);
+        self.window.set_anchor(start, anchor_start);
+        self.window.set_anchor(end, anchor_end);
+
         if horizontal {
             self.window.set_height_request(cfg.bar.thickness);
-            self.window.set_width_request(-1);
+            self.window.set_width_request(length_px);
             self.root.set_orientation(Orientation::Horizontal);
         } else {
             self.window.set_width_request(cfg.bar.thickness);
-            self.window.set_height_request(-1);
+            self.window.set_height_request(length_px);
             self.root.set_orientation(Orientation::Vertical);
         }
         self.window.auto_exclusive_zone_enable();

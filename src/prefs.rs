@@ -4,7 +4,7 @@
 //! drag a slider or pick a color. "Save" persists config.toml / the theme file.
 
 use crate::bar::BarHandle;
-use crate::config::{Edge, PanelConfig};
+use crate::config::{Align, BarLength, Edge, PanelConfig};
 use crate::theme::{Theme, themes_dir};
 use gtk::gdk::RGBA;
 use gtk::glib;
@@ -139,6 +139,68 @@ fn general_page(handle: &BarHandle) -> GtkBox {
         h.apply();
     });
     page.append(&row("Thickness (px)", &thick));
+
+    // Length: full vs a fixed pixel count, plus alignment when fixed.
+    let cur_len = cfg.bar.length;
+    let cur_align = cfg.bar.align;
+    let length_mode = DropDown::from_strings(&["full", "fixed (px)"]);
+    length_mode.set_selected(if matches!(cur_len, BarLength::Full) { 0 } else { 1 });
+    let length_px = SpinButton::with_range(40.0, 8000.0, 10.0);
+    length_px.set_value(match cur_len {
+        BarLength::Px(n) => n as f64,
+        BarLength::Full => 600.0,
+    });
+    let align = DropDown::from_strings(&["start", "center", "end"]);
+    align.set_selected(match cur_align {
+        Align::Start => 0,
+        Align::Center => 1,
+        Align::End => 2,
+    });
+    let fixed = matches!(cur_len, BarLength::Px(_));
+    length_px.set_sensitive(fixed);
+    align.set_sensitive(fixed);
+
+    // One closure recomputes length/align from the three widgets and applies.
+    let apply_len = {
+        let h = handle.clone();
+        let mode = length_mode.clone();
+        let px = length_px.clone();
+        let al = align.clone();
+        std::rc::Rc::new(move || {
+            let fixed = mode.selected() == 1;
+            px.set_sensitive(fixed);
+            al.set_sensitive(fixed);
+            {
+                let mut c = h.cfg.borrow_mut();
+                c.bar.length = if fixed {
+                    BarLength::Px(px.value() as i32)
+                } else {
+                    BarLength::Full
+                };
+                c.bar.align = match al.selected() {
+                    0 => Align::Start,
+                    2 => Align::End,
+                    _ => Align::Center,
+                };
+            }
+            h.apply();
+        })
+    };
+    {
+        let f = apply_len.clone();
+        length_mode.connect_selected_notify(move |_| f());
+    }
+    {
+        let f = apply_len.clone();
+        length_px.connect_value_changed(move |_| f());
+    }
+    {
+        let f = apply_len.clone();
+        align.connect_selected_notify(move |_| f());
+    }
+    page.append(&row("Length", &length_mode));
+    page.append(&row("Length (px, if fixed)", &length_px));
+    page.append(&row("Align (if fixed)", &align));
 
     // Monitor
     let mon = SpinButton::with_range(-1.0, 16.0, 1.0);

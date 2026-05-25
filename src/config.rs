@@ -23,12 +23,61 @@ impl Edge {
     }
 }
 
+/// The bar's length along its long axis (height for vertical bars, width for
+/// horizontal): either stretched to fill the monitor edge, or a fixed pixel
+/// count. In TOML: `length = "full"` (or "max") or `length = 600`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[serde(from = "LenRepr", into = "LenRepr")]
+pub enum BarLength {
+    #[default]
+    Full,
+    Px(i32),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum LenRepr {
+    Word(String),
+    Num(i32),
+}
+
+impl From<LenRepr> for BarLength {
+    fn from(r: LenRepr) -> Self {
+        match r {
+            LenRepr::Num(n) if n > 0 => BarLength::Px(n),
+            _ => BarLength::Full, // "full"/"max"/anything else
+        }
+    }
+}
+impl From<BarLength> for LenRepr {
+    fn from(b: BarLength) -> Self {
+        match b {
+            BarLength::Full => LenRepr::Word("full".into()),
+            BarLength::Px(n) => LenRepr::Num(n),
+        }
+    }
+}
+
+/// Where a fixed-length bar sits along its edge (ignored when length = full).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Align {
+    Start,
+    #[default]
+    Center,
+    End,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BarConfig {
     pub edge: Edge,
     /// Bar thickness in px (width for vertical bars, height for horizontal).
     pub thickness: i32,
+    /// Long-axis size: "full" (fill the edge) or a pixel count.
+    pub length: BarLength,
+    /// Position of a fixed-length bar along its edge (start/center/end).
+    pub align: Align,
     pub monitor: i32,
     /// Continuous graph scrolling (smoother, but redraws per frame). Off = stepped.
     pub smooth: bool,
@@ -44,6 +93,8 @@ impl Default for BarConfig {
         Self {
             edge: Edge::Right,
             thickness: 150,
+            length: BarLength::Full,
+            align: Align::Center,
             monitor: 0,
             smooth: true,
             graph_gamma: 2.0,
@@ -205,6 +256,8 @@ theme = "default"
 [bar]
 edge = "right"      # left | right | top | bottom  (left/right = vertical bar)
 thickness = 150     # px: width for vertical bars, height for horizontal
+length = "full"     # "full"/"max" to fill the edge, or a pixel count (e.g. 600)
+align = "center"    # start | center | end  (only used when length is fixed)
 monitor = 0
 smooth = true       # continuous graph scrolling; false = stepped (less battery)
 graph_gamma = 2.0   # autoscaled-graph spikiness; >1 sharper peaks, 1.0 = linear

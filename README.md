@@ -84,7 +84,9 @@ theme = "default"   # built-in, or a name under ~/.config/xerotop/themes/<name>.
 [bar]
 edge = "right"      # left | right | top | bottom  (left/right = vertical)
 thickness = 150     # px: width for vertical bars, height for horizontal
-monitor = 0
+length = "full"     # "full" to fill the edge, or a pixel count (e.g. 600)
+align = "center"    # start | center | end  (where a fixed-length bar sits)
+monitor = 0         # output index; -1 = compositor's choice
 smooth = true       # continuous graph scrolling; false = stepped (less battery)
 graph_gamma = 2.0   # autoscaled-graph spikiness; >1 sharper peaks, 1.0 = linear
 opacity = 0.88      # background opacity: 0.0 transparent .. 1.0 opaque
