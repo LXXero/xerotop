@@ -281,7 +281,7 @@ where
     icon.add_css_class("meter-icon");
     icon.set_width_chars(2);
     icon.set_xalign(0.5);
-    let bar = Bar::new(-1, BAR_H, 100.0, rgba);
+    let bar = Bar::new(0, BAR_H, 100.0, rgba);
     bar.area.set_hexpand(true);
     bar.area.set_valign(gtk::Align::Center);
     let val = Label::new(Some("--"));
@@ -592,55 +592,133 @@ fn pixmap_texture(w: i32, h: i32, argb: &[u8]) -> Option<gtk::gdk::Texture> {
     Some(tex.upcast())
 }
 
-/// Build a GMenu (+ backing actions) from the DBus menu tree: nested submenus,
-/// separators become sections, items map to `tray.iN` actions that send a click.
-fn build_menu_model(
+/// Build a custom cascading menu Popover from the DBus menu tree. Plain widgets
+/// with direct click handlers (no GAction muxer), left-aligned, with submenus
+/// that open on hover (and click). `dismiss` closes the whole chain (clicking a
+/// leaf or the root auto-hiding cascades down).
+#[allow(clippy::too_many_arguments)]
+fn make_menu_popover(
     entries: &[crate::tray::MenuEntry],
-    group: &gtk::gio::SimpleActionGroup,
+    stable: &gtk::Widget,
     atx: &Rc<async_channel::Sender<crate::tray::TrayAction>>,
     addr: &str,
-    menu_path: &str,
-) -> gtk::gio::Menu {
-    use gtk::gio;
-    let menu = gio::Menu::new();
-    let mut section = gio::Menu::new();
+    mp: &str,
+    dismiss: &Rc<dyn Fn()>,
+    autohide: bool,
+    position: gtk::PositionType,
+) -> gtk::Popover {
+    let pop = gtk::Popover::new();
+    pop.set_autohide(autohide);
+    pop.set_has_arrow(false);
+    pop.set_position(position);
+    pop.add_css_class("ctx-menu");
+    let vbox = GtkBox::new(Orientation::Vertical, 0);
+    vbox.add_css_class("menu");
+
+    // child submenu open at this level (so hovering a sibling closes it)
+    let cur_child: Rc<RefCell<Option<gtk::Popover>>> = Rc::new(RefCell::new(None));
+
     for e in entries {
         if e.separator {
-            if section.n_items() > 0 {
-                menu.append_section(None, &section);
-                section = gio::Menu::new();
-            }
+            let rule = GtkBox::new(Orientation::Horizontal, 0);
+            rule.add_css_class("rule");
+            rule.set_size_request(-1, 1);
+            vbox.append(&rule);
             continue;
         }
+        let row = gtk::Button::new();
+        row.add_css_class("menu-item");
+        row.set_sensitive(e.enabled);
+        let rb = GtkBox::new(Orientation::Horizontal, 8);
+        let lbl = Label::new(Some(&e.label));
+        lbl.set_xalign(0.0);
+        lbl.set_hexpand(true);
+        rb.append(&lbl);
+        if !e.children.is_empty() {
+            let arrow = Label::new(Some("\u{203a}")); // ›
+            rb.append(&arrow);
+        }
+        row.set_child(Some(&rb));
+
         if e.children.is_empty() {
-            let action_name = format!("i{}", e.id);
-            let action = gio::SimpleAction::new(&action_name, None);
-            action.set_enabled(e.enabled);
             let atx = atx.clone();
             let addr = addr.to_string();
-            let mp = menu_path.to_string();
+            let mp = mp.to_string();
             let id = e.id;
-            action.connect_activate(move |_, _| {
+            let dismiss2 = dismiss.clone();
+            row.connect_clicked(move |_| {
                 let _ = atx.try_send(crate::tray::TrayAction::MenuClick(
                     addr.clone(),
                     mp.clone(),
                     id,
                 ));
+                dismiss2();
             });
-            group.add_action(&action);
-            section.append_item(&gio::MenuItem::new(
-                Some(&e.label),
-                Some(&format!("tray.{action_name}")),
-            ));
+            // hovering a leaf closes any open sibling submenu
+            let cur = cur_child.clone();
+            let motion = gtk::EventControllerMotion::new();
+            motion.connect_enter(move |_, _, _| {
+                if let Some(old) = cur.borrow_mut().take() {
+                    old.popdown();
+                }
+            });
+            row.add_controller(motion);
         } else {
-            let sub = build_menu_model(&e.children, group, atx, addr, menu_path);
-            section.append_submenu(Some(&e.label), &sub);
+            let children = e.children.clone();
+            let stable_c = stable.clone();
+            let atx_c = atx.clone();
+            let addr_c = addr.to_string();
+            let mp_c = mp.to_string();
+            let dismiss_c = dismiss.clone();
+            let cur = cur_child.clone();
+            let row_weak = row.downgrade();
+            let open_child = move || {
+                if cur.borrow().is_some() {
+                    return; // already open
+                }
+                let Some(rw) = row_weak.upgrade() else {
+                    return;
+                };
+                let child = make_menu_popover(
+                    &children,
+                    &stable_c,
+                    &atx_c,
+                    &addr_c,
+                    &mp_c,
+                    &dismiss_c,
+                    false,
+                    gtk::PositionType::Right,
+                );
+                child.set_parent(&stable_c);
+                if let Some(b) = rw.compute_bounds(&stable_c) {
+                    child.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+                        b.x() as i32,
+                        b.y() as i32,
+                        b.width() as i32,
+                        b.height() as i32,
+                    )));
+                }
+                child.popup();
+                cur.replace(Some(child));
+            };
+            let on_enter = open_child.clone();
+            let motion = gtk::EventControllerMotion::new();
+            motion.connect_enter(move |_, _, _| on_enter());
+            row.add_controller(motion);
+            row.connect_clicked(move |_| open_child());
         }
+        vbox.append(&row);
     }
-    if section.n_items() > 0 {
-        menu.append_section(None, &section);
-    }
-    menu
+
+    pop.set_child(Some(&vbox));
+    let cur2 = cur_child.clone();
+    pop.connect_closed(move |p| {
+        if let Some(c) = cur2.borrow_mut().take() {
+            c.popdown(); // cascade-close descendants
+        }
+        p.unparent();
+    });
+    pop
 }
 
 /// System tray: StatusNotifier items as clickable icons (left-click activates).
@@ -679,7 +757,7 @@ fn tray_panel() -> Panel {
                     });
                 }
 
-                // right-click: native PopoverMenu built from the DBus menu tree
+                // right-click: custom cascading menu (direct handlers + hover)
                 if it.menu_path.is_some() && !it.menu.is_empty() {
                     let atx = atx.clone();
                     let addr = it.id.clone();
@@ -698,15 +776,30 @@ fn tray_panel() -> Panel {
                             addr.clone(),
                             menu_path.clone(),
                         ));
-                        let group = gtk::gio::SimpleActionGroup::new();
-                        let model = build_menu_model(&entries, &group, &atx, &addr, &menu_path);
-                        let pop = gtk::PopoverMenu::from_model(Some(&model));
-                        pop.insert_action_group("tray", Some(&group));
-                        pop.set_position(gtk::PositionType::Left);
-                        // Parent to the panel root (stable) and point at the icon,
-                        // so a tray rebuild destroying the button can't orphan it.
-                        pop.set_parent(&parent);
-                        if let Some(b) = anchor.compute_bounds(&parent) {
+                        let stable: gtk::Widget = parent.clone().upcast();
+                        // dismiss() closes the root, whose closed handler cascades.
+                        let root_holder: Rc<RefCell<Option<gtk::Popover>>> =
+                            Rc::new(RefCell::new(None));
+                        let dismiss: Rc<dyn Fn()> = {
+                            let h = root_holder.clone();
+                            Rc::new(move || {
+                                if let Some(p) = h.borrow().as_ref() {
+                                    p.popdown();
+                                }
+                            })
+                        };
+                        let pop = make_menu_popover(
+                            &entries,
+                            &stable,
+                            &atx,
+                            &addr,
+                            &menu_path,
+                            &dismiss,
+                            true,
+                            gtk::PositionType::Left,
+                        );
+                        pop.set_parent(&stable);
+                        if let Some(b) = anchor.compute_bounds(&stable) {
                             pop.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
                                 b.x() as i32,
                                 b.y() as i32,
@@ -714,7 +807,7 @@ fn tray_panel() -> Panel {
                                 b.height() as i32,
                             )));
                         }
-                        pop.connect_closed(|p| p.unparent());
+                        root_holder.replace(Some(pop.clone()));
                         pop.popup();
                     });
                     btn.add_controller(gesture);
@@ -830,7 +923,7 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         lbl.set_xalign(0.0);
         lbl.set_width_chars(3);
         let g = graph.then(|| {
-            let g = Graph::new(-1, 12, Some(100.0), 1.0, &[(color, true)], interval, smooth);
+            let g = Graph::new(0, 12, Some(100.0), 1.0, &[(color, true)], interval, smooth);
             g.area.set_hexpand(true);
             g.area.set_valign(gtk::Align::Center);
             g
