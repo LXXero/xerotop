@@ -281,6 +281,19 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     });
     page.append(&row("Graph spikiness (gamma)", &gamma));
 
+    // Graph history window (shorter = livelier/more zoom; ewwii ≈ 10s)
+    let window = Scale::with_range(Orientation::Horizontal, 4.0, 60.0, 1.0);
+    window.set_value(cfg.bar.graph_window_secs);
+    window.set_hexpand(true);
+    window.set_draw_value(true);
+    window.set_size_request(180, -1);
+    let h = handle.clone();
+    window.connect_value_changed(move |s| {
+        h.cfg.borrow_mut().bar.graph_window_secs = s.value();
+        h.apply();
+    });
+    page.append(&row("Graph window (sec)", &window));
+
     // Smooth
     let smooth = Switch::new();
     smooth.set_active(cfg.bar.smooth);

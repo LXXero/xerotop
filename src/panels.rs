@@ -69,6 +69,20 @@ pub fn set_gamma(g: f64) {
     AUTOSCALE_GAMMA.with(|c| c.set(g));
 }
 
+thread_local! {
+    /// Seconds of history a graph spans (shorter = livelier autoscale).
+    static GRAPH_WINDOW: std::cell::Cell<f64> = const { std::cell::Cell::new(15.0) };
+}
+
+/// Set the graph history window in seconds. Call before (re)building panels.
+pub fn set_graph_window(secs: f64) {
+    GRAPH_WINDOW.with(|c| c.set(secs.max(2.0)));
+}
+
+fn graph_window() -> f64 {
+    GRAPH_WINDOW.with(|c| c.get())
+}
+
 /// Set the graph palette from the active theme. Call before (re)building panels.
 pub fn set_palette(p: Palette) {
     PALETTE.with(|c| c.set(p));
@@ -107,21 +121,13 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
             let (tf, df) = clock_fmts();
             Some(clock_panel(iv, tf, df))
         }
-        "cpu" => Some(metric_panel(
-            "CPU",
-            iv,
-            cfg.graph,
-            pal().green,
-            smooth,
-            None,
-            {
-                let cpu = Rc::new(RefCell::new(Cpu::new()));
-                move || {
-                    let p = cpu.borrow_mut().sample();
-                    (format!("{p:.0}%"), p)
-                }
-            },
-        )),
+        "cpu" => Some(metric_panel("CPU", iv, cfg.graph, pal().green, smooth, {
+            let cpu = Rc::new(RefCell::new(Cpu::new()));
+            move || {
+                let p = cpu.borrow_mut().sample();
+                (format!("{p:.0}%"), p)
+            }
+        })),
         "mem" => Some(mem_panel(iv, cfg.graph, smooth)),
         "temp" => Some(temp_panel(iv, cfg.graph, smooth)),
         "top" => Some(top_panel(iv)),
@@ -238,38 +244,36 @@ fn graph_widget(
     root: &GtkBox,
     h: i32,
     specs: &[(Rgba, bool)],
-    fixed: Option<f64>,
     iv: f64,
     smooth: bool,
     graph: bool,
 ) -> Option<Graph> {
     graph.then(|| {
-        // Autoscaled graphs (cpu/gpu/net/disk) use gamma > 1 to deepen valleys
-        // and sharpen peaks (ewwii-like spikiness); fixed-scale meters (mem/temp)
-        // stay linear so the fill reflects the true level.
-        let gamma = if fixed.is_some() {
-            1.0
-        } else {
-            AUTOSCALE_GAMMA.with(|c| c.get())
-        };
         // Width 0 + hexpand: fill the bar's width instead of imposing a fixed
         // floor, so reducing bar thickness actually shrinks the graphs. The draw
         // func already adapts to whatever width it's allocated.
-        let g = Graph::new(0, h, fixed, gamma, specs, iv, smooth, false);
+        let g = Graph::new(
+            0,
+            h,
+            AUTOSCALE_GAMMA.with(|c| c.get()),
+            specs,
+            iv,
+            smooth,
+            graph_window(),
+        );
         g.area.set_hexpand(true);
         root.append(&g.area);
         g
     })
 }
 
-/// 0..100 single-series filled metric (cpu, temp).
+/// Single-series filled metric (cpu).
 fn metric_panel<F>(
     name: &str,
     interval: f64,
     graph: bool,
     rgba: Rgba,
     smooth: bool,
-    fixed: Option<f64>,
     sampler: F,
 ) -> Panel
 where
@@ -278,15 +282,7 @@ where
     let root = panel_box();
     let (row, val) = header(name);
     root.append(&row);
-    let g = graph_widget(
-        &root,
-        GRAPH_H,
-        &[(rgba, true)],
-        fixed,
-        interval,
-        smooth,
-        graph,
-    );
+    let g = graph_widget(&root, GRAPH_H, &[(rgba, true)], interval, smooth, graph);
     let update = Box::new(move || {
         let (text, pct) = sampler();
         val.set_text(&text);
@@ -307,13 +303,10 @@ fn mem_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     let root = panel_box();
     let (row, val) = header("MEM");
     root.append(&row);
-    // Autoscale (None) like cpu/gpu so memory swings show as spikes instead of a
-    // flat low line pinned to 0..100% of total RAM.
     let g = graph_widget(
         &root,
         GRAPH_H,
         &[(pal().cyan, true), (pal().pale, false)],
-        None,
         interval,
         smooth,
         graph,
@@ -421,7 +414,6 @@ fn net_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         &root,
         MINI_H,
         &[(pal().cyan, true)],
-        None,
         interval,
         smooth,
         graph,
@@ -430,7 +422,6 @@ fn net_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         &root,
         MINI_H,
         &[(pal().amber, true)],
-        None,
         interval,
         smooth,
         graph,
@@ -461,7 +452,6 @@ fn gpu_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         &root,
         GRAPH_H,
         &[(pal().violet, true)],
-        None,
         interval,
         smooth,
         graph,
@@ -495,7 +485,6 @@ fn disk_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         &root,
         MINI_H,
         &[(pal().cyan, true)],
-        None,
         interval,
         smooth,
         graph,
@@ -504,7 +493,6 @@ fn disk_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         &root,
         MINI_H,
         &[(pal().amber, true)],
-        None,
         interval,
         smooth,
         graph,
@@ -1230,17 +1218,16 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         val.set_xalign(1.0);
         val.set_width_chars(3);
 
-        // Trend graph (autobase: amplifies the small swings temps actually have).
+        // Trend graph — dynamic min..max amplifies the small swings temps have.
         let g = graph.then(|| {
             let g = Graph::new(
                 30,
                 MINI_H,
-                None,
                 1.0,
                 &[(color, true)],
                 interval,
                 smooth,
-                true,
+                graph_window(),
             );
             g.area.set_valign(gtk::Align::Center);
             g

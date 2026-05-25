@@ -95,9 +95,12 @@ pub struct BarConfig {
     pub monitor: i32,
     /// Continuous graph scrolling (smoother, but redraws per frame). Off = stepped.
     pub smooth: bool,
-    /// Spikiness of autoscaled graphs (cpu/gpu/net/disk): >1 sharpens peaks and
-    /// deepens valleys, 1.0 = linear. Fixed meters (mem/temp) ignore this.
+    /// Spikiness of autoscaled graphs: >1 sharpens peaks and deepens valleys,
+    /// 1.0 = linear (ewwii-like).
     pub graph_gamma: f64,
+    /// Seconds of history each graph spans. Shorter = livelier, more reactive
+    /// autoscaling (ewwii's default is ~10s); longer = smoother/calmer.
+    pub graph_window_secs: f64,
     /// Background opacity 0.0 (transparent) .. 1.0 (opaque).
     pub opacity: f64,
 }
@@ -113,6 +116,7 @@ impl Default for BarConfig {
             monitor: 0,
             smooth: true,
             graph_gamma: 2.0,
+            graph_window_secs: 15.0,
             opacity: 0.88,
         }
     }
@@ -305,6 +309,7 @@ layer = "top"       # top | bottom | background | overlay  (bottom = windows ove
 monitor = 0
 smooth = true       # continuous graph scrolling; false = stepped (less battery)
 graph_gamma = 2.0   # autoscaled-graph spikiness; >1 sharper peaks, 1.0 = linear
+graph_window_secs = 15  # seconds of history per graph; shorter = livelier autoscale
 opacity = 0.88      # background opacity: 0.0 transparent .. 1.0 opaque
 
 [power]

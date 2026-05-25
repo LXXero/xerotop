@@ -27,8 +27,6 @@ fn rounded_rect(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64
     cr.close_path();
 }
 
-const WINDOW_SECS: f64 = 60.0; // graph spans ~60s regardless of sample interval
-
 struct Series {
     buf: VecDeque<f64>,
     rgba: Rgba,
@@ -43,29 +41,29 @@ pub struct Graph {
 }
 
 impl Graph {
-    /// `specs` = one `(color, fill?)` per series. `fixed_max` None = autoscale.
+    /// `specs` = one `(color, fill?)` per series. The vertical scale tracks the
+    /// recent `min..max` across `window_secs` of history (ewwii's method: the
+    /// floor rises to the recent minimum so small swings fill the height, and a
+    /// short window makes it rescale reactively). `gamma` > 1 bows the curve.
     /// `smooth` adds a per-frame scroll between samples.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         w: i32,
         h: i32,
-        fixed_max: Option<f64>,
         gamma: f64,
         specs: &[(Rgba, bool)],
         interval_s: f64,
         smooth: bool,
-        // Scale to the recent min..max instead of 0..max — amplifies small swings
-        // on values that never go near zero (temps). Ignores fixed_max.
-        autobase: bool,
+        window_secs: f64,
     ) -> Self {
         let area = DrawingArea::new();
         area.add_css_class("graph");
         area.set_content_width(w);
         area.set_content_height(h);
 
-        // Sample count tracks a ~60s window so the graph spans the same wall-clock
-        // time at any interval (and fills in ~60s, not 128s at a 2s interval).
-        let len = ((WINDOW_SECS / interval_s.max(0.05)).round() as usize).clamp(8, 512);
+        // Sample count tracks the configured window so the graph spans the same
+        // wall-clock time at any interval (shorter window = livelier autoscale).
+        let len = ((window_secs / interval_s.max(0.05)).round() as usize).clamp(8, 512);
         let series: Vec<Series> = specs
             .iter()
             .map(|(rgba, fill)| Series {
@@ -89,36 +87,19 @@ impl Graph {
             if n < 3 {
                 return;
             }
-            // Vertical scale: autobase maps recent min..max across the height;
-            // otherwise 0..(fixed_max or recent peak).
-            let (lo, hi) = if autobase {
-                let mut lo = f64::INFINITY;
-                let mut hi = f64::NEG_INFINITY;
-                for v in ss.iter().flat_map(|se| se.buf.iter().copied()) {
-                    lo = lo.min(v);
-                    hi = hi.max(v);
-                }
-                (lo, hi)
-            } else {
-                let hi = match fixed_max {
-                    Some(m) => m,
-                    None => {
-                        // Autoscale to the recent peak, with 15% headroom so a
-                        // sustained peak (e.g. GPU pinned high) doesn't clip flat
-                        // against the very top of the chart.
-                        let peak = ss
-                            .iter()
-                            .flat_map(|se| se.buf.iter().copied())
-                            .fold(1e-9, f64::max);
-                        peak * 1.15
-                    }
-                };
-                (0.0, hi)
-            };
+            // Dynamic min..max across all series over the window (ewwii's method):
+            // the floor rises to the recent minimum, so small swings fill the
+            // height and a short window makes it rescale reactively.
+            let mut lo = f64::INFINITY;
+            let mut hi = f64::NEG_INFINITY;
+            for v in ss.iter().flat_map(|se| se.buf.iter().copied()) {
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
             let span = hi - lo;
             let yof = |v: f64| {
                 if span < 1e-6 {
-                    h / 2.0 // flat (constant) → midline rather than collapsed
+                    h // flat (no variation) → baseline, like ewwii
                 } else {
                     h - ((v - lo) / span).clamp(0.0, 1.0).powf(gamma) * h
                 }

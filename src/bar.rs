@@ -71,6 +71,7 @@ impl BarHandle {
         let cfg = self.cfg.borrow();
         let theme = self.theme.borrow();
         panels::set_gamma(cfg.bar.graph_gamma);
+        panels::set_graph_window(cfg.bar.graph_window_secs);
         panels::set_palette(theme.palette());
         panels::set_tray(cfg.tray.columns, cfg.tray.icon_size);
 
