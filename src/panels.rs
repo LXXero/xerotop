@@ -307,11 +307,13 @@ fn mem_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     let root = panel_box();
     let (row, val) = header("MEM");
     root.append(&row);
+    // Autoscale (None) like cpu/gpu so memory swings show as spikes instead of a
+    // flat low line pinned to 0..100% of total RAM.
     let g = graph_widget(
         &root,
         GRAPH_H,
         &[(pal().cyan, true), (pal().pale, false)],
-        Some(100.0),
+        None,
         interval,
         smooth,
         graph,

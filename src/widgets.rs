@@ -100,11 +100,19 @@ impl Graph {
                 }
                 (lo, hi)
             } else {
-                let hi = fixed_max.unwrap_or_else(|| {
-                    ss.iter()
-                        .flat_map(|se| se.buf.iter().copied())
-                        .fold(1e-9, f64::max)
-                });
+                let hi = match fixed_max {
+                    Some(m) => m,
+                    None => {
+                        // Autoscale to the recent peak, with 15% headroom so a
+                        // sustained peak (e.g. GPU pinned high) doesn't clip flat
+                        // against the very top of the chart.
+                        let peak = ss
+                            .iter()
+                            .flat_map(|se| se.buf.iter().copied())
+                            .fold(1e-9, f64::max);
+                        peak * 1.15
+                    }
+                };
                 (0.0, hi)
             };
             let span = hi - lo;
