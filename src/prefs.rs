@@ -698,9 +698,26 @@ fn panel_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> GtkBox {
 const SENSOR_COLORS: [&str; 5] = ["#ff7366", "#c78cff", "#66ccff", "#66ff66", "#ffbf4d"];
 
 fn temp_page(handle: &BarHandle) -> GtkBox {
+    // Nothing configured yet = auto-detect. Make those defaults visible/editable
+    // by seeding the list with them, so adding a sensor appends instead of
+    // silently replacing the whole auto set. (Reproduces the same sensors, so
+    // the bar looks identical; only persisted if the user hits Save.)
+    if handle.cfg.borrow().temp.sensors.is_empty() {
+        let seeded: Vec<TempSensor> = crate::metrics::default_sensors()
+            .into_iter()
+            .map(|(chip, input, label, color)| TempSensor {
+                chip,
+                input,
+                label: label.to_string(),
+                color: color.to_string(),
+            })
+            .collect();
+        handle.cfg.borrow_mut().temp.sensors = seeded;
+    }
+
     let page = page_box();
     page.append(&Label::new(Some(
-        "Empty list = auto (cpu/gpu/ssd + fan). Add sensors below to customize.",
+        "Add sensors from the dropdown. Empty list = auto-detect (cpu/gpu/ssd + fan).",
     )));
 
     // Average-of-temps row toggle.

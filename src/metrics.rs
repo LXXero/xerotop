@@ -219,6 +219,41 @@ pub fn list_sensors() -> Vec<SensorInfo> {
     out
 }
 
+/// The auto-detected default TEMP sensors (chip, input, label, color hex) — the
+/// same set the panel shows when no sensors are configured. Used to seed the
+/// prefs list so the defaults are visible/editable instead of starting blank.
+pub fn default_sensors() -> Vec<(String, String, &'static str, &'static str)> {
+    let all = list_sensors();
+    let first_temp = |chips: &[&str]| -> Option<(String, String)> {
+        all.iter()
+            .find(|s| s.kind == SensorKind::Temp && chips.contains(&s.chip.as_str()))
+            .map(|s| (s.chip.clone(), s.input.clone()))
+    };
+    let mut out = Vec::new();
+    let mut push = |sel: Option<(String, String)>, label, color| {
+        if let Some((chip, input)) = sel {
+            out.push((chip, input, label, color));
+        }
+    };
+    push(
+        first_temp(&["k10temp", "coretemp", "zenpower"]),
+        "cpu",
+        "#ff7366",
+    );
+    push(
+        first_temp(&["amdgpu", "radeon", "nouveau", "nvidia"]),
+        "gpu",
+        "#c78cff",
+    );
+    push(first_temp(&["nvme", "drivetemp"]), "ssd", "#66ccff");
+    let fan = all
+        .iter()
+        .find(|s| s.kind == SensorKind::Fan && s.value > 0.0)
+        .map(|s| (s.chip.clone(), s.input.clone()));
+    push(fan, "fan", "#ffbf4d");
+    out
+}
+
 /// Read a sensor by chip name + input (e.g. "k10temp","temp1"). Resolves by the
 /// chip's `name` because hwmonN numbers aren't stable across boots.
 pub fn read_sensor(chip: &str, input: &str) -> Option<f64> {
