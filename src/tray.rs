@@ -30,9 +30,9 @@ pub struct TrayItem {
 
 /// Requests sent from the GTK thread back to the tray host.
 pub enum TrayAction {
-    Activate(String),               // address (left-click)
-    MenuClick(String, String, i32), // address, menu_path, submenu_id
-    AboutToShow(String, String),    // address, menu_path — refresh before showing
+    Activate(String),                 // address (left-click)
+    MenuClick(String, String, i32),   // address, menu_path, submenu_id
+    AboutToShow(String, String, i32), // address, menu_path, menu/submenu id
 }
 
 fn best_pixmap(pix: Option<&Vec<IconPixmap>>) -> Option<(i32, i32, Vec<u8>)> {
@@ -172,8 +172,8 @@ async fn run(
                             eprintln!("xerotop: menu activate failed: {e}");
                         }
                     }
-                    Ok(TrayAction::AboutToShow(address, menu_path)) => {
-                        let _ = client.about_to_show_menuitem(address, menu_path, 0).await;
+                    Ok(TrayAction::AboutToShow(address, menu_path, id)) => {
+                        let _ = client.about_to_show_menuitem(address, menu_path, id).await;
                     }
                     Err(_) => break,
                 }

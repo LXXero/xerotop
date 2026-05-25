@@ -672,6 +672,7 @@ fn make_menu_popover(
             let dismiss_c = dismiss.clone();
             let cur = cur_child.clone();
             let row_weak = row.downgrade();
+            let sub_id = e.id;
             let open_child = move || {
                 if cur.borrow().is_some() {
                     return; // already open
@@ -679,6 +680,12 @@ fn make_menu_popover(
                 let Some(rw) = row_weak.upgrade() else {
                     return;
                 };
+                // tell the app this submenu is opening so it honors its items
+                let _ = atx_c.try_send(crate::tray::TrayAction::AboutToShow(
+                    addr_c.clone(),
+                    mp_c.clone(),
+                    sub_id,
+                ));
                 let child = make_menu_popover(
                     &children,
                     &stable_c,
@@ -775,6 +782,7 @@ fn tray_panel() -> Panel {
                         let _ = atx.try_send(crate::tray::TrayAction::AboutToShow(
                             addr.clone(),
                             menu_path.clone(),
+                            0,
                         ));
                         let stable: gtk::Widget = parent.clone().upcast();
                         // dismiss() closes the root, whose closed handler cascades.
