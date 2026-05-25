@@ -20,8 +20,7 @@ fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_startup(|_| load_css());
     app.connect_activate(|app| {
-        let cfg = config::load();
-        bar::build(app, &cfg);
+        let _bar = bar::build(app, config::load());
     });
     app.run()
 }
