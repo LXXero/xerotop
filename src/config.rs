@@ -46,7 +46,7 @@ impl Default for BarConfig {
             thickness: 150,
             monitor: 0,
             smooth: true,
-            graph_gamma: 1.4,
+            graph_gamma: 2.0,
             opacity: 0.88,
         }
     }
@@ -195,7 +195,7 @@ edge = "right"      # left | right | top | bottom  (left/right = vertical bar)
 thickness = 150     # px: width for vertical bars, height for horizontal
 monitor = 0
 smooth = true       # continuous graph scrolling; false = stepped (less battery)
-graph_gamma = 1.4   # autoscaled-graph spikiness; >1 sharper peaks, 1.0 = linear
+graph_gamma = 2.0   # autoscaled-graph spikiness; >1 sharper peaks, 1.0 = linear
 opacity = 0.88      # background opacity: 0.0 transparent .. 1.0 opaque
 
 [power]
