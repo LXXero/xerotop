@@ -365,7 +365,7 @@ type Getter = fn(&Theme) -> String;
 type Setter = fn(&mut Theme, String);
 
 #[allow(clippy::type_complexity)]
-const COLOR_FIELDS: [(&str, Getter, Setter); 12] = [
+const COLOR_FIELDS: [(&str, Getter, Setter); 13] = [
     (
         "Background",
         |t| t.background.clone(),
@@ -387,6 +387,11 @@ const COLOR_FIELDS: [(&str, Getter, Setter); 12] = [
         "Power accent",
         |t| t.accent_power.clone(),
         |t, v| t.accent_power = v,
+    ),
+    (
+        "Clock accent",
+        |t| t.accent_clock.clone(),
+        |t, v| t.accent_clock = v,
     ),
     ("Graph green", |t| t.green.clone(), |t, v| t.green = v),
     ("Graph cyan", |t| t.cyan.clone(), |t, v| t.cyan = v),

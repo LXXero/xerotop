@@ -1342,6 +1342,65 @@ fn spawn(cmd: &str) {
 }
 
 /// Header: power menu (left) · clock (center) · lock (right), with date below.
+/// Time widget: HH:MM (large, accent) + a smaller AM/PM suffix.
+fn clock_time_widget() -> (GtkBox, Label, Label) {
+    let row = GtkBox::new(Orientation::Horizontal, 3);
+    row.set_halign(gtk::Align::Center);
+    let time = Label::new(Some("--:--"));
+    time.add_css_class("clock-time");
+    time.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    let ampm = Label::new(None);
+    ampm.add_css_class("clock-ampm");
+    ampm.set_valign(gtk::Align::Baseline);
+    row.append(&time);
+    row.append(&ampm);
+    (row, time, ampm)
+}
+
+/// Split a formatted time into the main part and a trailing AM/PM-style suffix.
+fn set_clock_time(time: &Label, ampm: &Label, fmt: &str) {
+    let Ok(now) = gtk::glib::DateTime::now_local() else {
+        return;
+    };
+    let Ok(s) = now.format(fmt) else {
+        return;
+    };
+    let s = s.trim();
+    match s.rsplit_once(' ') {
+        Some((main, suf)) if !suf.is_empty() && suf.chars().all(|c| c.is_alphabetic()) => {
+            time.set_text(main.trim_end());
+            ampm.set_text(suf);
+        }
+        _ => {
+            time.set_text(s);
+            ampm.set_text("");
+        }
+    }
+}
+
+/// Rebuild the date row: numeric tokens (the day) get the bright accent class,
+/// the rest stay muted — so the day number pops, locale-agnostically.
+fn set_clock_date(row: &GtkBox, fmt: &str) {
+    let Ok(now) = gtk::glib::DateTime::now_local() else {
+        return;
+    };
+    let Ok(d) = now.format(fmt) else {
+        return;
+    };
+    while let Some(c) = row.first_child() {
+        row.remove(&c);
+    }
+    for tok in d.split_whitespace() {
+        let l = Label::new(Some(tok));
+        if tok.chars().all(|c| c.is_ascii_digit()) {
+            l.add_css_class("clock-daynum");
+        } else {
+            l.add_css_class("clock-date");
+        }
+        row.append(&l);
+    }
+}
+
 fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Actions) -> Panel {
     let root = panel_box();
     root.add_css_class("clock");
@@ -1387,31 +1446,21 @@ fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Act
     let lock_cmd = actions.lock.clone();
     lock.connect_clicked(move |_| spawn(&lock_cmd));
 
-    let time = Label::new(Some("--:--"));
-    time.add_css_class("clock-time");
-    time.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    let (time_row, time, ampm) = clock_time_widget();
 
     top.set_start_widget(Some(&power));
-    top.set_center_widget(Some(&time));
+    top.set_center_widget(Some(&time_row));
     top.set_end_widget(Some(&lock));
 
-    let date = Label::new(Some(""));
-    date.add_css_class("clock-date");
+    let date = GtkBox::new(Orientation::Horizontal, 4);
     date.set_halign(gtk::Align::Center);
-    date.set_ellipsize(gtk::pango::EllipsizeMode::End);
 
     root.append(&top);
     root.append(&date);
 
     let update = Box::new(move || {
-        if let Ok(now) = gtk::glib::DateTime::now_local() {
-            if let Ok(t) = now.format(&time_fmt) {
-                time.set_text(t.trim_start());
-            }
-            if let Ok(d) = now.format(&date_fmt) {
-                date.set_text(&d);
-            }
-        }
+        set_clock_time(&time, &ampm, &time_fmt);
+        set_clock_date(&date, &date_fmt);
     });
     Panel {
         root: root.upcast(),
@@ -1423,23 +1472,14 @@ fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Act
 fn clock_panel(interval: f64, time_fmt: String, date_fmt: String) -> Panel {
     let root = panel_box();
     root.add_css_class("clock");
-    let time = Label::new(Some("--:--"));
-    time.add_css_class("clock-time");
-    time.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    let date = Label::new(Some(""));
-    date.add_css_class("clock-date");
-    date.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    root.append(&time);
+    let (time_row, time, ampm) = clock_time_widget();
+    let date = GtkBox::new(Orientation::Horizontal, 4);
+    date.set_halign(gtk::Align::Center);
+    root.append(&time_row);
     root.append(&date);
     let update = Box::new(move || {
-        if let Ok(now) = gtk::glib::DateTime::now_local() {
-            if let Ok(t) = now.format(&time_fmt) {
-                time.set_text(t.trim_start());
-            }
-            if let Ok(d) = now.format(&date_fmt) {
-                date.set_text(&d);
-            }
-        }
+        set_clock_time(&time, &ampm, &time_fmt);
+        set_clock_date(&date, &date_fmt);
     });
     Panel {
         root: root.upcast(),
