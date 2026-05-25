@@ -25,8 +25,6 @@ pub struct Theme {
     pub accent_lock: String,
     /// Power button (green by default).
     pub accent_power: String,
-    /// Clock time + day-number accent (blue by default).
-    pub accent_clock: String,
     // Font sizes (px) — gkrellm-style tiers applied to text roles:
     // small = sub-values, date, taskbar; normal = labels/values/base;
     // large = the clock time.
@@ -52,7 +50,6 @@ impl Default for Theme {
             muted: "#667788".into(),
             accent_lock: "#d4af37".into(),
             accent_power: "#5fd75f".into(),
-            accent_clock: "#7aa2f7".into(),
             font_small: 10,
             font_normal: 12,
             font_large: 18,
@@ -152,10 +149,10 @@ window.xerotop {{ background-color: transparent; }}
 .task-min {{ color: {muted}; font-style: italic; background-color: rgba(255,255,255,0.03); border-radius: 4px; }}
 .tray-item {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; min-width: 0; padding: 2px; }}
 .tray-item:hover {{ background-color: rgba(255,255,255,0.10); }}
-.clock-time {{ font-weight: bold; font-size: {large}px; color: {clock}; }}
+.clock-time {{ font-weight: bold; font-size: {large}px; color: {label}; }}
 .clock-ampm {{ font-size: {small}px; color: {value}; }}
 .clock-date {{ font-size: {small}px; color: {label}; }}
-.clock-daynum {{ font-weight: bold; font-size: {normal}px; color: {clock}; }}
+.clock-daynum {{ font-weight: bold; font-size: {normal}px; color: {label}; }}
 .hbtn {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; min-width: 0; padding: 0 4px; color: {label}; font-size: 17px; }}
 .hbtn:hover {{ color: {bright}; }}
 .lock {{ color: {lock}; }}
@@ -177,7 +174,6 @@ window.xerotop {{ background-color: transparent; }}
             lock_hi = lighten(&self.accent_lock, 0.25),
             power = norm(&self.accent_power),
             power_hi = lighten(&self.accent_power, 0.25),
-            clock = norm(&self.accent_clock),
         )
     }
 }
