@@ -25,9 +25,9 @@ thread_local! {
     static WINDOW: RefCell<Option<Window>> = const { RefCell::new(None) };
 }
 
-const PANEL_TYPES: [&str; 14] = [
-    "header", "clock", "cpu", "mem", "gpu", "disk", "net", "temp", "bat", "vol", "bri", "top",
-    "win", "tray",
+const PANEL_TYPES: [&str; 17] = [
+    "header", "clock", "cpu", "cores", "mem", "gpu", "disk", "net", "temp", "uptime", "kbd", "bat",
+    "vol", "bri", "top", "win", "tray",
 ];
 
 /// Open (or re-focus) the preferences window for the given bar.

@@ -282,3 +282,57 @@ impl Bar {
         self.area.queue_draw();
     }
 }
+
+/// A row of small vertical bars — one per CPU core (conky-style), 0..100 each.
+#[derive(Clone)]
+pub struct Cores {
+    pub area: DrawingArea,
+    vals: Rc<RefCell<Vec<f64>>>,
+}
+
+impl Cores {
+    pub fn new(h: i32, rgba: Rgba) -> Self {
+        let area = DrawingArea::new();
+        area.add_css_class("bar-meter");
+        area.set_content_height(h);
+        area.set_hexpand(true);
+        let vals: Rc<RefCell<Vec<f64>>> = Rc::new(RefCell::new(Vec::new()));
+
+        let v = vals.clone();
+        let (r, g, b, a) = rgba;
+        area.set_draw_func(move |_, cr, w, h| {
+            let (w, h) = (w as f64, h as f64);
+            let vv = v.borrow();
+            let n = vv.len();
+            if n == 0 {
+                return;
+            }
+            let gap = if n > 24 { 1.0 } else { 2.0 };
+            let bw = ((w - gap * (n as f64 - 1.0)) / n as f64).max(1.0);
+            let lite = |c: f64| (c + (1.0 - c) * 0.5).min(1.0);
+            for (i, &val) in vv.iter().enumerate() {
+                let x = i as f64 * (bw + gap);
+                // track
+                cr.set_source_rgba(1.0, 1.0, 1.0, 0.08);
+                cr.rectangle(x, 0.0, bw, h);
+                let _ = cr.fill();
+                // fill, bottom-up, glossy
+                let fh = h * (val / 100.0).clamp(0.0, 1.0);
+                if fh > 0.5 {
+                    let grad = gtk::cairo::LinearGradient::new(0.0, h - fh, 0.0, h);
+                    grad.add_color_stop_rgba(0.0, lite(r), lite(g), lite(b), a);
+                    grad.add_color_stop_rgba(1.0, r * 0.6, g * 0.6, b * 0.6, a);
+                    cr.rectangle(x, h - fh, bw, fh);
+                    let _ = cr.set_source(&grad);
+                    let _ = cr.fill();
+                }
+            }
+        });
+        Cores { area, vals }
+    }
+
+    pub fn set(&self, v: Vec<f64>) {
+        *self.vals.borrow_mut() = v;
+        self.area.queue_draw();
+    }
+}

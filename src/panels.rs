@@ -4,10 +4,11 @@
 
 use crate::config::{Actions, HeaderButton, HeaderSlot, PanelConfig};
 use crate::metrics::{
-    Cpu, Disk, Net, Top, add_brightness, add_volume, battery, brightness, disk_usage, fan_rpm, gpu,
-    mem_detail, temp_cpu, temp_gpu, temp_ssd, toggle_mute, volume,
+    Cpu, CpuCores, Disk, Net, Top, add_brightness, add_volume, battery, brightness, disk_usage,
+    fan_rpm, gpu, keyboard_leds, mem_detail, temp_cpu, temp_gpu, temp_ssd, toggle_mute, uptime,
+    volume,
 };
-use crate::widgets::{Bar, Graph, GraphScale, Rgba};
+use crate::widgets::{Bar, Cores, Graph, GraphScale, Rgba};
 use gtk::prelude::*;
 use gtk::{Box as GtkBox, Label, Orientation};
 use std::cell::RefCell;
@@ -134,6 +135,9 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
         )),
         "mem" => Some(mem_panel(iv, cfg.graph, smooth)),
         "temp" => Some(temp_panel(iv, cfg.graph, smooth)),
+        "cores" => Some(cores_panel(iv)),
+        "uptime" => Some(uptime_panel(iv)),
+        "kbd" | "leds" => Some(kbd_panel(iv)),
         "top" => Some(top_panel(iv)),
         "gpu" => Some(gpu_panel(iv, cfg.graph, smooth)),
         "disk" => Some(disk_panel(iv, cfg.graph, smooth)),
@@ -411,6 +415,96 @@ where
     let update = Box::new(move || upd());
     Panel {
         root: row.upcast(),
+        interval,
+        update,
+    }
+}
+
+/// Per-core CPU as a row of small vertical bars; header shows the average %.
+fn cores_panel(interval: f64) -> Panel {
+    let root = panel_box();
+    let (row, val) = header("CPU");
+    root.append(&row);
+    let cores = Cores::new(GRAPH_H, pal().green);
+    cores.area.set_valign(gtk::Align::Center);
+    root.append(&cores.area);
+
+    let sampler = Rc::new(RefCell::new(CpuCores::new()));
+    let update = Box::new(move || {
+        let v = sampler.borrow_mut().sample();
+        let avg = if v.is_empty() {
+            0.0
+        } else {
+            v.iter().sum::<f64>() / v.len() as f64
+        };
+        val.set_text(&format!("{avg:.0}%"));
+        cores.set(v);
+    });
+    Panel {
+        root: root.upcast(),
+        interval,
+        update,
+    }
+}
+
+/// Uptime as "Xd Yh Zm".
+fn uptime_panel(interval: f64) -> Panel {
+    let root = panel_box();
+    let (row, val) = header("UP");
+    root.append(&row);
+    let update = Box::new(move || match uptime() {
+        Some(secs) => {
+            let s = secs as u64;
+            let (d, h, m) = (s / 86400, (s % 86400) / 3600, (s % 3600) / 60);
+            let text = if d > 0 {
+                format!("{d}d {h}h")
+            } else if h > 0 {
+                format!("{h}h {m}m")
+            } else {
+                format!("{m}m")
+            };
+            val.set_text(&text);
+        }
+        None => val.set_text("--"),
+    });
+    Panel {
+        root: root.upcast(),
+        interval,
+        update,
+    }
+}
+
+/// Keyboard lock LEDs (caps/num/scroll): lit = bright, off = dim.
+fn kbd_panel(interval: f64) -> Panel {
+    let root = panel_box();
+    let row = GtkBox::new(Orientation::Horizontal, 10);
+    let head = Label::new(Some("KBD"));
+    head.add_css_class("label");
+    head.set_xalign(0.0);
+    head.set_hexpand(true);
+    row.append(&head);
+
+    // One label per present LED, in keyboard_leds() order.
+    let labels: Vec<Label> = keyboard_leds()
+        .iter()
+        .map(|(name, _)| {
+            let l = Label::new(Some(name));
+            l.add_css_class("sub");
+            row.append(&l);
+            l
+        })
+        .collect();
+    root.append(&row);
+
+    let update = Box::new(move || {
+        for ((_, on), lbl) in keyboard_leds().iter().zip(&labels) {
+            lbl.remove_css_class("value");
+            lbl.remove_css_class("sub");
+            lbl.add_css_class(if *on { "value" } else { "sub" });
+        }
+    });
+    Panel {
+        root: root.upcast(),
         interval,
         update,
     }

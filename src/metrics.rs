@@ -51,6 +51,84 @@ impl Cpu {
     }
 }
 
+/// Per-core CPU busy %, from the `cpuN` lines of /proc/stat.
+pub struct CpuCores {
+    prev: Vec<(u64, u64)>,
+}
+
+impl CpuCores {
+    pub fn new() -> Self {
+        Self { prev: Self::raw() }
+    }
+
+    fn raw() -> Vec<(u64, u64)> {
+        fs::read_to_string("/proc/stat")
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.starts_with("cpu") && l.as_bytes().get(3).is_some_and(u8::is_ascii_digit))
+            .map(|line| {
+                let vals: Vec<u64> = line
+                    .split_whitespace()
+                    .skip(1)
+                    .filter_map(|v| v.parse().ok())
+                    .collect();
+                let idle = vals.get(3).copied().unwrap_or(0) + vals.get(4).copied().unwrap_or(0);
+                (idle, vals.iter().sum())
+            })
+            .collect()
+    }
+
+    /// Busy % per core since the last call.
+    pub fn sample(&mut self) -> Vec<f64> {
+        let cur = Self::raw();
+        let out = cur
+            .iter()
+            .zip(self.prev.iter().chain(std::iter::repeat(&(0, 0))))
+            .map(|(&(i, t), &(pi, pt))| {
+                let di = i.saturating_sub(pi) as f64;
+                let dt = t.saturating_sub(pt) as f64;
+                if dt > 0.0 {
+                    ((1.0 - di / dt) * 100.0).clamp(0.0, 100.0)
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        self.prev = cur;
+        out
+    }
+}
+
+/// Keyboard lock LED states (caps/num/scroll) present on the system.
+pub fn keyboard_leds() -> Vec<(&'static str, bool)> {
+    let state = |suffix: &str| -> Option<bool> {
+        for e in fs::read_dir("/sys/class/leds").ok()?.flatten() {
+            if e.file_name().to_string_lossy().ends_with(suffix) {
+                return Some(read_u64(&e.path().join("brightness")) > 0);
+            }
+        }
+        None
+    };
+    [
+        ("::capslock", "CAPS"),
+        ("::numlock", "NUM"),
+        ("::scrolllock", "SCRL"),
+    ]
+    .into_iter()
+    .filter_map(|(suffix, label)| state(suffix).map(|on| (label, on)))
+    .collect()
+}
+
+/// System uptime in seconds.
+pub fn uptime() -> Option<f64> {
+    fs::read_to_string("/proc/uptime")
+        .ok()?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
+
 /// Memory breakdown from /proc/meminfo: (used%, cache%). "used" follows the
 /// ewwii script: (MemTotal - MemAvailable) / MemTotal.
 pub fn mem_detail() -> (f64, f64) {
