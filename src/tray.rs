@@ -165,7 +165,6 @@ async fn run(
                             .await;
                     }
                     Ok(TrayAction::MenuClick(address, menu_path, submenu_id)) => {
-                        eprintln!("xerotop: MenuClick id={submenu_id} path={menu_path}");
                         if let Err(e) = client
                             .activate(ActivateRequest::MenuItem { address, menu_path, submenu_id })
                             .await
