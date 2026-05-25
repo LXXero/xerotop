@@ -181,8 +181,17 @@ impl Graph {
                     cr.set_source_rgba(r, g, b, a * 0.35);
                     let _ = cr.fill();
                 }
-                // Top curve only: never stroke closing verticals/baselines.
-                cr.move_to(first_x, first_y);
+                // Stroke the top curve. During warmup the leftmost point sits
+                // at first_x > 0, so close it with a left vertical down to the
+                // baseline; once the buffer fills, old points scroll to x <= 0
+                // and the clip hides that wall — so it shows on the left edge
+                // only until the graph reaches it.
+                if first_x > 0.5 {
+                    cr.move_to(first_x, h);
+                    cr.line_to(first_x, first_y);
+                } else {
+                    cr.move_to(first_x, first_y);
+                }
                 for i in 1..n {
                     cr.line_to(xof(i), yof(se.buf[i]));
                 }
