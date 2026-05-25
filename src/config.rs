@@ -164,6 +164,10 @@ pub struct TempSensor {
     /// Fill color (hex `#rrggbb`); empty → a default from the palette.
     #[serde(default)]
     pub color: String,
+    /// Fan rows only: RPM mapped to a full level bar. 0 → default (FAN_MAX_RPM).
+    /// Ignored for temperature rows (those scale 0..100 °C).
+    #[serde(default)]
+    pub fan_max: f64,
 }
 
 /// TEMP panel sensor selection. The list may include a special averaging row

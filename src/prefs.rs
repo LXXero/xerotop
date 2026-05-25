@@ -753,6 +753,7 @@ fn default_temp_sensors() -> Vec<TempSensor> {
             input,
             label: label.to_string(),
             color: color.to_string(),
+            fan_max: 0.0,
         })
         .collect()
 }
@@ -817,6 +818,7 @@ fn temp_page(handle: &BarHandle) -> GtkBox {
             input: input.clone(),
             label: label.clone(),
             color: SENSOR_COLORS[n % SENSOR_COLORS.len()].to_string(),
+            fan_max: 0.0,
         });
         h.apply();
         populate_temp_list(&h, &list_c);
@@ -850,7 +852,7 @@ fn populate_temp_list(handle: &BarHandle, list: &ListBox) {
 }
 
 fn temp_sensor_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> GtkBox {
-    let (chip, input, label, color) = {
+    let (chip, input, label, color, fan_max) = {
         let cfg = handle.cfg.borrow();
         let s = &cfg.temp.sensors[i];
         (
@@ -858,6 +860,7 @@ fn temp_sensor_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> Gt
             s.input.clone(),
             s.label.clone(),
             s.color.clone(),
+            s.fan_max,
         )
     };
     let r = GtkBox::new(Orientation::Horizontal, 6);
@@ -907,6 +910,19 @@ fn temp_sensor_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> Gt
         h.apply();
     });
     r.append(&color_btn);
+
+    // Fan rows only: full-scale RPM for the level bar (next to the color picker).
+    if input.starts_with("fan") {
+        let max = gtk::SpinButton::with_range(500.0, 8000.0, 100.0);
+        max.set_value(if fan_max > 0.0 { fan_max } else { 3000.0 });
+        max.set_tooltip_text(Some("Fan RPM mapped to a full bar"));
+        let h = handle.clone();
+        max.connect_value_changed(move |s| {
+            h.cfg.borrow_mut().temp.sensors[i].fan_max = s.value();
+            h.apply();
+        });
+        r.append(&max);
+    }
 
     let spacer = GtkBox::new(Orientation::Horizontal, 0);
     spacer.set_hexpand(true);

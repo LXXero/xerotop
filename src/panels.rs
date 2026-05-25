@@ -25,6 +25,9 @@ pub struct Panel {
 const GRAPH_H: i32 = 24;
 const MINI_H: i32 = 14;
 const BAR_H: i32 = 7;
+/// Default full-scale fan RPM for the level bar when a sensor sets no fan_max.
+/// Covers typical case/rad/CPU fans and most AIO pumps; override per-sensor.
+const FAN_MAX_RPM: f64 = 3000.0;
 
 /// Graph drawing palette — a named set of colors reused across panels. Comes
 /// from the active theme; the defaults reproduce the original look.
@@ -1500,12 +1503,13 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
 
     // (label, kind, color, sensor key) per row, in display order. The key is
     // None for the averaging row (computed on the UI side from the snapshot).
-    let mut specs: Vec<(String, RowKind, Rgba, Option<TempKey>)> = Vec::new();
+    // fan_max is the RPM→full-bar scale for fan rows (0 = default).
+    let mut specs: Vec<(String, RowKind, Rgba, Option<TempKey>, f64)> = Vec::new();
     if cfg.sensors.is_empty() {
-        specs.push(("cpu".into(), RowKind::Temp, pal().red, Some(TempKey::Cpu)));
-        specs.push(("gpu".into(), RowKind::Temp, pal().violet, Some(TempKey::Gpu)));
-        specs.push(("ssd".into(), RowKind::Temp, pal().cyan, Some(TempKey::Ssd)));
-        specs.push(("fan".into(), RowKind::Fan, pal().amber, Some(TempKey::Fan)));
+        specs.push(("cpu".into(), RowKind::Temp, pal().red, Some(TempKey::Cpu), 0.0));
+        specs.push(("gpu".into(), RowKind::Temp, pal().violet, Some(TempKey::Gpu), 0.0));
+        specs.push(("ssd".into(), RowKind::Temp, pal().cyan, Some(TempKey::Ssd), 0.0));
+        specs.push(("fan".into(), RowKind::Fan, pal().amber, Some(TempKey::Fan), 0.0));
     } else {
         let defaults = [
             pal().red,
@@ -1535,30 +1539,44 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
                 hex_rgba(&s.color)
             };
             let key = (kind != RowKind::Avg).then(|| TempKey::Chip(s.chip.clone(), s.input.clone()));
-            specs.push((label, kind, color, key));
+            specs.push((label, kind, color, key, s.fan_max));
         }
     }
 
     // Build the sampler request (real sensors only) and remember each row's
     // index into the resulting snapshot.
     let mut keys: Vec<TempKey> = Vec::new();
-    let row_specs: Vec<(String, RowKind, Rgba, Option<usize>)> = specs
+    let row_specs: Vec<(String, RowKind, Rgba, Option<usize>, f64)> = specs
         .into_iter()
-        .map(|(label, kind, color, key)| {
+        .map(|(label, kind, color, key, fan_max)| {
             let idx = key.map(|k| {
                 keys.push(k);
                 keys.len() - 1
             });
-            (label, kind, color, idx)
+            (label, kind, color, idx, fan_max)
         })
         .collect();
 
-    let make_row = |label: &str, kind: RowKind, color: Rgba, idx: Option<usize>| -> TempRow {
+    // Align bars within each group by sizing the label column to the longest
+    // label — separately for temps (incl. avg) and fans, so each group's bars
+    // start at the same x and come out equal length.
+    let label_w = |kind: RowKind| -> i32 {
+        row_specs
+            .iter()
+            .filter(|(_, k, _, _, _)| (*k == RowKind::Fan) == (kind == RowKind::Fan))
+            .map(|(l, _, _, _, _)| l.chars().count())
+            .max()
+            .unwrap_or(3)
+            .max(3) as i32
+    };
+    let (temp_w, fan_w) = (label_w(RowKind::Temp), label_w(RowKind::Fan));
+
+    let make_row = |label: &str, kind: RowKind, color: Rgba, idx: Option<usize>, fan_max: f64| -> TempRow {
         let row = GtkBox::new(Orientation::Horizontal, 4);
         let lbl = Label::new(Some(label));
         lbl.add_css_class("sub");
         lbl.set_xalign(0.0);
-        lbl.set_width_chars(3);
+        lbl.set_width_chars(if kind == RowKind::Fan { fan_w } else { temp_w });
         row.append(&lbl);
 
         let val = Label::new(Some("--"));
@@ -1566,13 +1584,16 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         val.set_xalign(1.0);
         val.set_width_chars(if kind == RowKind::Fan { 5 } else { 3 });
 
-        // Temps and the avg row get a bar + trend graph; fans show rpm only.
+        // Fans get a level bar scaled to fan_max RPM (no trend graph); temps and
+        // the avg row get a 0..100 °C bar + trend graph.
         let (bar, g) = if kind == RowKind::Fan {
-            let sp = GtkBox::new(Orientation::Horizontal, 0);
-            sp.set_hexpand(true);
-            row.append(&sp);
+            let max = if fan_max > 0.0 { fan_max } else { FAN_MAX_RPM };
+            let bar = Bar::new(0, BAR_H, max, color);
+            bar.area.set_hexpand(true);
+            bar.area.set_valign(gtk::Align::Center);
+            row.append(&bar.area);
             row.append(&val);
-            (None, None)
+            (Some(bar), None)
         } else {
             let bar = Bar::new(0, BAR_H, 100.0, color);
             bar.area.set_hexpand(true);
@@ -1608,7 +1629,7 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
 
     let rows: Vec<TempRow> = row_specs
         .into_iter()
-        .map(|(label, kind, color, idx)| make_row(&label, kind, color, idx))
+        .map(|(label, kind, color, idx, fan_max)| make_row(&label, kind, color, idx, fan_max))
         .collect();
 
     // Sample on a worker thread; the render fn below runs when a snapshot
