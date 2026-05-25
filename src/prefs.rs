@@ -885,7 +885,13 @@ fn temp_sensor_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> Gt
         h.cfg.borrow_mut().temp.sensors[i].label = e.text().to_string();
     });
     let h = handle.clone();
-    label_entry.connect_activate(move |_| h.apply());
+    label_entry.connect_activate(move |_| h.apply()); // Enter applies
+    // Also apply on focus-out, so clicking away (not just Enter) re-renders the
+    // bar — matches the instant-apply color picker next to it.
+    let h = handle.clone();
+    let focus = gtk::EventControllerFocus::new();
+    focus.connect_leave(move |_| h.apply());
+    label_entry.add_controller(focus);
     r.append(&label_entry);
 
     let color_btn = ColorDialogButton::new(Some(ColorDialog::new()));
