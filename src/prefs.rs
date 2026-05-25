@@ -427,6 +427,31 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
     });
     page.append(&row("Font", &font_btn));
 
+    // Font-size tiers (gkrellm-style small/normal/large).
+    let font_size_spin = |get: fn(&Theme) -> i32, set: fn(&mut Theme, i32)| {
+        let sp = SpinButton::with_range(4.0, 96.0, 1.0);
+        sp.set_value(get(&handle.theme.borrow()) as f64);
+        let h = handle.clone();
+        let ld = loading.clone();
+        sp.connect_value_changed(move |s| {
+            if ld.get() {
+                return;
+            }
+            {
+                let mut t = h.theme.borrow_mut();
+                set(&mut t, s.value() as i32);
+            }
+            h.apply();
+        });
+        sp
+    };
+    let f_small = font_size_spin(|t| t.font_small, |t, v| t.font_small = v);
+    let f_normal = font_size_spin(|t| t.font_normal, |t, v| t.font_normal = v);
+    let f_large = font_size_spin(|t| t.font_large, |t, v| t.font_large = v);
+    page.append(&row("Font small (sub, date)", &f_small));
+    page.append(&row("Font normal (labels, values)", &f_normal));
+    page.append(&row("Font large (clock)", &f_large));
+
     // One color button per theme color; remembered so loading a theme refreshes them.
     let buttons: Rc<RefCell<Vec<(Getter, ColorDialogButton)>>> = Rc::new(RefCell::new(Vec::new()));
     for (name, get, set) in COLOR_FIELDS {
@@ -453,6 +478,7 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
     let h = handle.clone();
     let buttons_c = buttons.clone();
     let font_c = font_btn.clone();
+    let (fs_c, fn_c, fl_c) = (f_small.clone(), f_normal.clone(), f_large.clone());
     let ld = loading.clone();
     selector.connect_selected_notify(move |d| {
         // Read the name from the model object, not a captured Vec — the model is
@@ -468,6 +494,9 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
         h.cfg.borrow_mut().theme = name.clone();
         ld.set(true);
         font_c.set_font_desc(&FontDescription::from_string(&t.font_family));
+        fs_c.set_value(t.font_small as f64);
+        fn_c.set_value(t.font_normal as f64);
+        fl_c.set_value(t.font_large as f64);
         for (get, btn) in buttons_c.borrow().iter() {
             btn.set_rgba(&hex_to_rgba(&get(&t)));
         }

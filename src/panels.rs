@@ -255,7 +255,7 @@ fn graph_widget(
         // Width 0 + hexpand: fill the bar's width instead of imposing a fixed
         // floor, so reducing bar thickness actually shrinks the graphs. The draw
         // func already adapts to whatever width it's allocated.
-        let g = Graph::new(0, h, fixed, gamma, specs, iv, smooth);
+        let g = Graph::new(0, h, fixed, gamma, specs, iv, smooth, false);
         g.area.set_hexpand(true);
         root.append(&g.area);
         g
@@ -1210,34 +1210,48 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         ("gpu", temp_gpu, pal().violet),
         ("ssd", temp_ssd, pal().cyan),
     ];
-    let mut rows: Vec<(Option<Graph>, Label, TempSrc)> = Vec::new();
+    // Each row: label · level bar (0..~100°C) · value · mini trend graph.
+    let mut rows: Vec<(Bar, Option<Graph>, Label, TempSrc)> = Vec::new();
     for (name, src, color) in sensors {
         let row = GtkBox::new(Orientation::Horizontal, 4);
         let lbl = Label::new(Some(name));
         lbl.add_css_class("sub");
         lbl.set_xalign(0.0);
         lbl.set_width_chars(3);
-        let g = graph.then(|| {
-            let g = Graph::new(0, 12, Some(100.0), 1.0, &[(color, true)], interval, smooth);
-            g.area.set_hexpand(true);
-            g.area.set_valign(gtk::Align::Center);
-            g
-        });
+
+        let bar = Bar::new(0, BAR_H, 100.0, color);
+        bar.area.set_hexpand(true);
+        bar.area.set_valign(gtk::Align::Center);
+
         let val = Label::new(Some("--"));
         val.add_css_class("value");
         val.set_xalign(1.0);
-        val.set_width_chars(4);
+        val.set_width_chars(3);
+
+        // Trend graph (autobase: amplifies the small swings temps actually have).
+        let g = graph.then(|| {
+            let g = Graph::new(
+                30,
+                MINI_H,
+                None,
+                1.0,
+                &[(color, true)],
+                interval,
+                smooth,
+                true,
+            );
+            g.area.set_valign(gtk::Align::Center);
+            g
+        });
+
         row.append(&lbl);
+        row.append(&bar.area);
+        row.append(&val);
         if let Some(g) = &g {
             row.append(&g.area);
-        } else {
-            let sp = Label::new(None);
-            sp.set_hexpand(true);
-            row.append(&sp);
         }
-        row.append(&val);
         root.append(&row);
-        rows.push((g, val, src));
+        rows.push((bar, g, val, src));
     }
 
     let fanrow = GtkBox::new(Orientation::Horizontal, 4);
@@ -1253,10 +1267,11 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     root.append(&fanrow);
 
     let update = Box::new(move || {
-        for (g, val, src) in &rows {
+        for (bar, g, val, src) in &rows {
             match src() {
                 Some(t) => {
                     val.set_text(&format!("{t:.0}\u{00b0}"));
+                    bar.set(t);
                     if let Some(g) = g {
                         g.push(&[t]);
                     }

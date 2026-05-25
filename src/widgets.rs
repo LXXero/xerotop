@@ -45,6 +45,7 @@ pub struct Graph {
 impl Graph {
     /// `specs` = one `(color, fill?)` per series. `fixed_max` None = autoscale.
     /// `smooth` adds a per-frame scroll between samples.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         w: i32,
         h: i32,
@@ -53,6 +54,9 @@ impl Graph {
         specs: &[(Rgba, bool)],
         interval_s: f64,
         smooth: bool,
+        // Scale to the recent min..max instead of 0..max — amplifies small swings
+        // on values that never go near zero (temps). Ignores fixed_max.
+        autobase: bool,
     ) -> Self {
         let area = DrawingArea::new();
         area.add_css_class("graph");
@@ -85,14 +89,32 @@ impl Graph {
             if n < 3 {
                 return;
             }
-            let max = fixed_max
-                .unwrap_or_else(|| {
+            // Vertical scale: autobase maps recent min..max across the height;
+            // otherwise 0..(fixed_max or recent peak).
+            let (lo, hi) = if autobase {
+                let mut lo = f64::INFINITY;
+                let mut hi = f64::NEG_INFINITY;
+                for v in ss.iter().flat_map(|se| se.buf.iter().copied()) {
+                    lo = lo.min(v);
+                    hi = hi.max(v);
+                }
+                (lo, hi)
+            } else {
+                let hi = fixed_max.unwrap_or_else(|| {
                     ss.iter()
                         .flat_map(|se| se.buf.iter().copied())
                         .fold(1e-9, f64::max)
-                })
-                .max(1e-9);
-            let yof = |v: f64| h - (v / max).clamp(0.0, 1.0).powf(gamma) * h;
+                });
+                (0.0, hi)
+            };
+            let span = hi - lo;
+            let yof = |v: f64| {
+                if span < 1e-6 {
+                    h / 2.0 // flat (constant) → midline rather than collapsed
+                } else {
+                    h - ((v - lo) / span).clamp(0.0, 1.0).powf(gamma) * h
+                }
+            };
             let step = w / (n as f64 - 2.0);
             let f = fr.get();
             let xof = |i: usize| (i as f64 - f) * step;

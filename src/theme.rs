@@ -25,6 +25,12 @@ pub struct Theme {
     pub accent_lock: String,
     /// Power button (green by default).
     pub accent_power: String,
+    // Font sizes (px) — gkrellm-style tiers applied to text roles:
+    // small = sub-values, date, taskbar; normal = labels/values/base;
+    // large = the clock time.
+    pub font_small: i32,
+    pub font_normal: i32,
+    pub font_large: i32,
     // Graph palette — a named set reused across panels.
     pub green: String,
     pub cyan: String,
@@ -44,6 +50,9 @@ impl Default for Theme {
             muted: "#667788".into(),
             accent_lock: "#d4af37".into(),
             accent_power: "#5fd75f".into(),
+            font_small: 10,
+            font_normal: 12,
+            font_large: 18,
             green: "#66ff66".into(),
             cyan: "#66ccff".into(),
             amber: "#ffbf4d".into(),
@@ -120,7 +129,7 @@ impl Theme {
    desktop showing through. Scoped to .xerotop so the prefs window (same display,
    shares this provider) stays opaque. */
 window.xerotop {{ background-color: transparent; }}
-.bar {{ font-family: "{font}", monospace; font-size: 12px; background-color: {bar_bg}; padding: 6px; }}
+.bar {{ font-family: "{font}", monospace; font-size: {normal}px; background-color: {bar_bg}; padding: 6px; }}
 .panel {{ padding: 0 4px; }}
 .meter {{ padding: 1px 4px; }}
 .rule {{ background-color: rgba(255,255,255,0.12); min-height: 1px; min-width: 1px; margin: 2px 0; }}
@@ -129,15 +138,15 @@ window.xerotop {{ background-color: transparent; }}
 .meter-icon {{ color: {icon}; font-size: 20px; }}
 .graph {{ background-color: rgba(0,0,0,0.25); }}
 .bar-meter {{ background-color: transparent; }}
-.sub {{ font-size: 9px; color: {muted}; }}
-.task {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; padding: 1px 3px; font-size: 11px; color: {label}; }}
+.sub {{ font-size: {small}px; color: {muted}; }}
+.task {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; padding: 1px 3px; font-size: {small}px; color: {label}; }}
 .task:hover {{ color: {value}; }}
 .task-active {{ background-color: rgba(255,255,255,0.10); color: {bright}; }}
 .task-min {{ color: {muted}; font-style: italic; background-color: rgba(255,255,255,0.03); border-radius: 4px; }}
 .tray-item {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; min-width: 0; padding: 2px; }}
 .tray-item:hover {{ background-color: rgba(255,255,255,0.10); }}
-.clock-time {{ font-weight: bold; font-size: 18px; color: {bright}; }}
-.clock-date {{ font-size: 10px; color: {label}; }}
+.clock-time {{ font-weight: bold; font-size: {large}px; color: {bright}; }}
+.clock-date {{ font-size: {small}px; color: {label}; }}
 .hbtn {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; min-width: 0; padding: 0 4px; color: {label}; font-size: 17px; }}
 .hbtn:hover {{ color: {bright}; }}
 .lock {{ color: {lock}; }}
@@ -149,6 +158,9 @@ window.xerotop {{ background-color: transparent; }}
 .menu-item:hover {{ background-color: rgba(255,255,255,0.10); }}
 "#,
             font = font,
+            small = self.font_small.clamp(4, 96),
+            normal = self.font_normal.clamp(4, 96),
+            large = self.font_large.clamp(4, 96),
             label = norm(&self.label),
             value = norm(&self.foreground),
             muted = norm(&self.muted),
