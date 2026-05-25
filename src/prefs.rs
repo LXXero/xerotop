@@ -368,6 +368,17 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     });
     page.append(&row("Weather refresh (min)", &wx_iv));
 
+    let wx_cond = CheckButton::with_label(
+        "Show condition text (else icon + temp only; full report on hover)",
+    );
+    wx_cond.set_active(cfg.weather.show_condition);
+    let h = handle.clone();
+    wx_cond.connect_toggled(move |c| {
+        h.cfg.borrow_mut().weather.show_condition = c.is_active();
+        h.apply();
+    });
+    page.append(&wx_cond);
+
     drop(cfg);
     page.append(&save_bar(handle));
     page

@@ -568,38 +568,47 @@ fn weather_host() -> WeatherHost {
     })
 }
 
-/// Weather: condition glyph + text + temperature, fetched from wttr.in.
+/// Weather: a compact icon + temperature (full report on hover), from wttr.in.
 fn weather_panel() -> Panel {
+    let show_cond = WEATHER_CFG.with(|w| w.borrow().show_condition);
     let root = panel_box();
     let row = GtkBox::new(Orientation::Horizontal, 6);
+
     let icon = Label::new(Some("\u{e30d}"));
     icon.add_css_class("meter-icon");
-    let cond = Label::new(Some("…"));
+    // Optional condition text — capped width so it never grows the bar.
+    let cond = Label::new(None);
     cond.add_css_class("label");
     cond.set_xalign(0.0);
-    cond.set_hexpand(true);
     cond.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    cond.set_max_width_chars(12);
+    cond.set_visible(show_cond);
+    let spacer = GtkBox::new(Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
     let temp = Label::new(Some("--"));
     temp.add_css_class("value");
     temp.set_xalign(1.0);
     row.append(&icon);
     row.append(&cond);
+    row.append(&spacer);
     row.append(&temp);
     root.append(&row);
 
     let host = weather_host();
     let _ = host.req_tx.send(weather_req()); // push current config → refetch if changed
 
-    let (icon_c, cond_c, temp_c) = (icon.clone(), cond.clone(), temp.clone());
+    let (icon_c, cond_c, temp_c, root_c) = (icon.clone(), cond.clone(), temp.clone(), root.clone());
     let render: WeatherRenderFn = Rc::new(move |w: &crate::weather::Weather| {
         if w.ok {
             icon_c.set_text(&w.icon);
             cond_c.set_text(&w.cond);
             temp_c.set_text(&w.temp);
+            root_c.set_tooltip_text(Some(&w.report));
         } else {
             icon_c.set_text("\u{e374}");
-            cond_c.set_text("weather");
+            cond_c.set_text("");
             temp_c.set_text("--");
+            root_c.set_tooltip_text(Some("weather unavailable"));
         }
     });
     render(&host.latest.borrow());

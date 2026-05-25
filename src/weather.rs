@@ -7,9 +7,10 @@ use std::time::Duration;
 
 #[derive(Clone, Default)]
 pub struct Weather {
-    pub icon: String, // Nerd Font weather glyph
-    pub temp: String, // e.g. "+72°F"
-    pub cond: String, // e.g. "Partly cloudy"
+    pub icon: String,   // Nerd Font weather glyph
+    pub temp: String,   // e.g. "+72°F"
+    pub cond: String,   // e.g. "Partly cloudy"
+    pub report: String, // multi-line detail for the tooltip
     pub ok: bool,
 }
 
@@ -56,8 +57,8 @@ fn fetch(req: &WeatherReq) -> Option<Weather> {
         "c" => "&m",
         _ => "",
     };
-    // %C = condition text, %t = temperature.
-    let url = format!("https://wttr.in/{loc}?format=%C|%t{unit}");
+    // condition | temp | location | feels-like | humidity | wind
+    let url = format!("https://wttr.in/{loc}?format=%C|%t|%l|%f|%h|%w{unit}");
     let body = ureq::get(&url)
         .call()
         .ok()?
@@ -66,17 +67,33 @@ fn fetch(req: &WeatherReq) -> Option<Weather> {
         .ok()?;
     let body = body.trim();
     // Guard against wttr.in error/HTML responses.
-    if body.is_empty() || body.contains('<') || body.len() > 120 {
+    if body.is_empty() || body.contains('<') || body.len() > 200 {
         return None;
     }
-    let (cond, temp) = body.split_once('|').unwrap_or(("", body));
-    if temp.trim().is_empty() {
+    let parts: Vec<&str> = body.split('|').map(str::trim).collect();
+    let field = |i: usize| parts.get(i).copied().unwrap_or("");
+    let (cond, temp, place, feels, humidity, wind) =
+        (field(0), field(1), field(2), field(3), field(4), field(5));
+    if temp.is_empty() {
         return None;
+    }
+    let mut report = String::new();
+    if !place.is_empty() {
+        report.push_str(place);
+        report.push('\n');
+    }
+    report.push_str(&format!("{cond}  {temp}"));
+    if !feels.is_empty() {
+        report.push_str(&format!("  (feels {feels})"));
+    }
+    if !humidity.is_empty() || !wind.is_empty() {
+        report.push_str(&format!("\n{humidity}  ·  {wind}"));
     }
     Some(Weather {
         icon: glyph_for(cond).to_string(),
-        temp: temp.trim().to_string(),
-        cond: cond.trim().to_string(),
+        temp: temp.to_string(),
+        cond: cond.to_string(),
+        report,
         ok: true,
     })
 }

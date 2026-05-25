@@ -186,6 +186,8 @@ pub struct WeatherConfig {
     pub units: String,
     /// Minutes between fetches.
     pub interval_min: f64,
+    /// Show the condition text next to the icon+temp (off = compact, tooltip only).
+    pub show_condition: bool,
 }
 
 impl Default for WeatherConfig {
@@ -194,6 +196,7 @@ impl Default for WeatherConfig {
             location: String::new(),
             units: "auto".into(),
             interval_min: 30.0,
+            show_condition: false,
         }
     }
 }
