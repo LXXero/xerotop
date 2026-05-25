@@ -657,6 +657,7 @@ fn tray_panel() -> Panel {
     let (rx, atx) = crate::tray::spawn();
     let atx = Rc::new(atx);
     let flow2 = flow.clone();
+    let root2 = root.clone(); // stable parent for popovers (survives rebuilds)
     gtk::glib::spawn_future_local(async move {
         while let Ok(items) = rx.recv().await {
             while let Some(child) = flow2.first_child() {
@@ -685,6 +686,7 @@ fn tray_panel() -> Panel {
                     let menu_path = it.menu_path.clone().unwrap();
                     let entries = it.menu.clone();
                     let btn_weak = btn.downgrade();
+                    let parent = root2.clone();
                     let gesture = gtk::GestureClick::new();
                     gesture.set_button(3);
                     gesture.connect_pressed(move |_, _, _, _| {
@@ -701,7 +703,17 @@ fn tray_panel() -> Panel {
                         let pop = gtk::PopoverMenu::from_model(Some(&model));
                         pop.insert_action_group("tray", Some(&group));
                         pop.set_position(gtk::PositionType::Left);
-                        pop.set_parent(&anchor);
+                        // Parent to the panel root (stable) and point at the icon,
+                        // so a tray rebuild destroying the button can't orphan it.
+                        pop.set_parent(&parent);
+                        if let Some(b) = anchor.compute_bounds(&parent) {
+                            pop.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+                                b.x() as i32,
+                                b.y() as i32,
+                                b.width() as i32,
+                                b.height() as i32,
+                            )));
+                        }
                         pop.connect_closed(|p| p.unparent());
                         pop.popup();
                     });
