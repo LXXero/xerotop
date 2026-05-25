@@ -575,7 +575,7 @@ fn weather_panel() -> Panel {
     let row = GtkBox::new(Orientation::Horizontal, 6);
 
     let icon = Label::new(Some("\u{e30d}"));
-    icon.add_css_class("meter-icon");
+    icon.add_css_class("weather-icon");
     // Optional condition text — capped width so it never grows the bar.
     let cond = Label::new(None);
     cond.add_css_class("label");
@@ -1732,23 +1732,35 @@ fn default_header_buttons(actions: &Actions) -> Vec<HeaderButton> {
             slot: HeaderSlot::TimeLeft,
             icon: "\u{f011}".into(), // power
             command: HEADER_MENU.into(),
+            color: "#5fd75f".into(), // green
         },
         HeaderButton {
             slot: HeaderSlot::TimeRight,
             icon: "\u{f023}".into(), // lock
             command: actions.lock.clone(),
+            color: "#d4af37".into(), // brass
         },
     ]
 }
 
 /// Build one header icon button. `command` "@menu" opens the power popover
 /// (logout/reboot/shutdown); otherwise it runs as a shell command on click.
-fn header_button(icon: &str, command: &str, actions: &Actions) -> gtk::Button {
+/// `color` (hex) tints the glyph; empty = default header/accent color.
+fn header_button(icon: &str, command: &str, color: &str, actions: &Actions) -> gtk::Button {
     let btn = gtk::Button::new();
-    btn.set_label(icon);
     btn.add_css_class("hbtn");
+    if color.is_empty() {
+        btn.set_label(icon);
+    } else {
+        let lbl = Label::new(None);
+        lbl.set_markup(&format!(
+            "<span foreground='{}'>{}</span>",
+            gtk::glib::markup_escape_text(color),
+            gtk::glib::markup_escape_text(icon),
+        ));
+        btn.set_child(Some(&lbl));
+    }
     if command == HEADER_MENU {
-        btn.add_css_class("power");
         let pop = gtk::Popover::new();
         let menu = GtkBox::new(Orientation::Vertical, 2);
         menu.add_css_class("menu");
@@ -1794,7 +1806,7 @@ fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Act
         buttons
             .iter()
             .find(|b| b.slot == slot && !b.icon.is_empty())
-            .map(|b| header_button(&b.icon, &b.command, actions))
+            .map(|b| header_button(&b.icon, &b.command, &b.color, actions))
     };
 
     // Time row: [time-left] HH:MM·ampm [time-right]

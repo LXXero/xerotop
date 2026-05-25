@@ -949,6 +949,7 @@ fn set_header_slot(
     slot: HeaderSlot,
     icon: String,
     command: String,
+    color: String,
 ) {
     buttons.retain(|b| b.slot != slot);
     if !icon.is_empty() || !command.is_empty() {
@@ -956,17 +957,18 @@ fn set_header_slot(
             slot,
             icon,
             command,
+            color,
         });
     }
 }
 
 fn header_slot_row(handle: &BarHandle, slot: HeaderSlot, name: &str) -> GtkBox {
-    let (icon0, cmd0) = {
+    let (icon0, cmd0, color0) = {
         let cfg = handle.cfg.borrow();
         cfg.header
             .iter()
             .find(|b| b.slot == slot)
-            .map(|b| (b.icon.clone(), b.command.clone()))
+            .map(|b| (b.icon.clone(), b.command.clone(), b.color.clone()))
             .unwrap_or_default()
     };
     let r = GtkBox::new(Orientation::Horizontal, 6);
@@ -988,23 +990,39 @@ fn header_slot_row(handle: &BarHandle, slot: HeaderSlot, name: &str) -> GtkBox {
     cmd.set_tooltip_text(Some("Press Enter to apply"));
     r.append(&cmd);
 
-    // Store on edit (no apply per keystroke); apply on Enter from either field.
+    let color = ColorDialogButton::new(Some(ColorDialog::new()));
+    color.set_rgba(&hex_to_rgba(if color0.is_empty() {
+        "#99aabb"
+    } else {
+        &color0
+    }));
+    r.append(&color);
+
+    // Store on edit (no apply per keystroke); apply on Enter / color pick.
     let store = {
         let h = handle.clone();
         let glyph_c = glyph.clone();
         let cmd_c = cmd.clone();
+        let color_c = color.clone();
         move || {
             set_header_slot(
                 &mut h.cfg.borrow_mut().header,
                 slot,
                 glyph_c.text().to_string(),
                 cmd_c.text().to_string(),
+                rgba_to_hex(&color_c.rgba()),
             );
         }
     };
     let s = store.clone();
     glyph.connect_changed(move |_| s());
-    cmd.connect_changed(move |_| store());
+    let s = store.clone();
+    cmd.connect_changed(move |_| s());
+    let h = handle.clone();
+    color.connect_rgba_notify(move |_| {
+        store();
+        h.apply();
+    });
     let h = handle.clone();
     glyph.connect_activate(move |_| h.apply());
     let h = handle.clone();
@@ -1021,11 +1039,13 @@ fn commands_page(handle: &BarHandle) -> GtkBox {
                 slot: HeaderSlot::TimeLeft,
                 icon: "\u{f011}".into(),
                 command: crate::panels::HEADER_MENU.into(),
+                color: "#5fd75f".into(), // green
             },
             HeaderButton {
                 slot: HeaderSlot::TimeRight,
                 icon: "\u{f023}".into(),
                 command: lock,
+                color: "#d4af37".into(), // brass
             },
         ];
     }

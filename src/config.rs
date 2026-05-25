@@ -221,6 +221,9 @@ pub struct HeaderButton {
     /// Click action: "@menu" opens the power popover (logout/reboot/shutdown
     /// from [actions]); anything else is run as a shell command.
     pub command: String,
+    /// Icon color (hex `#rrggbb`); empty → the default header/accent color.
+    #[serde(default)]
+    pub color: String,
 }
 
 /// Shell commands run by the header buttons (one-shot, on click — not polled).

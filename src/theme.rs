@@ -137,6 +137,7 @@ window.xerotop {{ background-color: transparent; }}
 .label {{ font-weight: bold; color: {label}; }}
 .value {{ color: {value}; }}
 .meter-icon {{ color: {icon}; font-size: 20px; }}
+.weather-icon {{ color: {icon}; font-size: 28px; }}
 .graph {{ background-color: rgba(0,0,0,0.25); }}
 .bar-meter {{ background-color: transparent; }}
 .sub {{ font-size: {small}px; color: {muted}; }}
