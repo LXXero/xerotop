@@ -171,45 +171,136 @@ fn hwmon_named(names: &[&str]) -> Option<std::path::PathBuf> {
     })
 }
 
-/// Temperature (°C) of the first hwmon matching `names`.
-fn temp_named(names: &[&str]) -> Option<f64> {
-    read_temp_input(&hwmon_named(names)?)
+// ---- background hwmon sampler ------------------------------------------------
+// hwmon reads are slow hardware transactions (nvme ~11ms, EC ~15ms, PHY ~29ms
+// on a real box) and the naive samplers re-enumerate /sys/class/hwmon on every
+// call. Doing that synchronously on the GTK thread every tick cost ~4.5% of a
+// core. So: resolve each requested sensor to a concrete input file ONCE, then
+// read those paths on a worker thread and stream snapshots to the UI — the slow
+// I/O never touches the main loop. Mirrors the weather/taskbar/tray threads.
+
+use std::path::PathBuf;
+use std::sync::mpsc;
+use std::time::Duration;
+
+/// Which sensor a temp row wants. The named variants are the auto-detected
+/// defaults; `Chip` is an explicitly configured (chip, input) pair.
+#[derive(Clone, PartialEq, Eq)]
+pub enum TempKey {
+    Cpu,
+    Gpu,
+    Ssd,
+    Fan,
+    Chip(String, String),
 }
 
-pub fn temp_cpu() -> Option<f64> {
-    temp_named(&["k10temp", "coretemp", "zenpower"])
-}
-pub fn temp_gpu() -> Option<f64> {
-    temp_named(&["amdgpu", "radeon", "nouveau", "nvidia"])
-}
-pub fn temp_ssd() -> Option<f64> {
-    temp_named(&["nvme", "drivetemp"])
+/// What the sampler thread should watch, and how often.
+#[derive(Clone)]
+pub struct TempReq {
+    pub keys: Vec<TempKey>,
+    pub interval_s: f64,
 }
 
-/// First nonzero fan speed (RPM) found in hwmon.
-pub fn fan_rpm() -> Option<f64> {
-    for e in fs::read_dir("/sys/class/hwmon").ok()?.flatten() {
+/// Latest reading per requested key, aligned to `TempReq::keys` order.
+pub type TempSnapshot = Vec<Option<f64>>;
+
+/// A key resolved to the concrete file we read each tick (cached so we don't
+/// re-scan hwmon). `Fan` keeps a directory + a probe in case the active fan
+/// input moves; everything else is a fixed file path.
+enum Resolved {
+    File(PathBuf, SensorKind),
+    Missing,
+}
+
+/// Find the first hwmon `fanN_input` that currently reads nonzero, so we can
+/// cache that exact path instead of re-probing every chip each sample.
+fn find_fan_input() -> Option<PathBuf> {
+    for dir in hwmon_dirs() {
         for i in 1..=8 {
-            if let Ok(s) = fs::read_to_string(e.path().join(format!("fan{i}_input")))
-                && let Ok(v) = s.trim().parse::<f64>()
-                && v > 0.0
+            let p = dir.join(format!("fan{i}_input"));
+            if fs::read_to_string(&p)
+                .ok()
+                .and_then(|s| s.trim().parse::<f64>().ok())
+                .is_some_and(|v| v > 0.0)
             {
-                return Some(v);
+                return Some(p);
             }
         }
     }
     None
 }
 
-fn read_temp_input(dir: &Path) -> Option<f64> {
-    for i in 1..=8 {
-        if let Ok(s) = fs::read_to_string(dir.join(format!("temp{i}_input")))
-            && let Ok(milli) = s.trim().parse::<f64>()
-        {
-            return Some(milli / 1000.0);
+fn resolve_key(key: &TempKey) -> Resolved {
+    let temp_file = |dir: &Path| -> Option<PathBuf> {
+        (1..=8)
+            .map(|i| dir.join(format!("temp{i}_input")))
+            .find(|p| p.exists())
+    };
+    let named = |names: &[&str]| -> Resolved {
+        match hwmon_named(names).as_deref().and_then(temp_file) {
+            Some(p) => Resolved::File(p, SensorKind::Temp),
+            None => Resolved::Missing,
+        }
+    };
+    match key {
+        TempKey::Cpu => named(&["k10temp", "coretemp", "zenpower"]),
+        TempKey::Gpu => named(&["amdgpu", "radeon", "nouveau", "nvidia"]),
+        TempKey::Ssd => named(&["nvme", "drivetemp"]),
+        TempKey::Fan => match find_fan_input() {
+            Some(p) => Resolved::File(p, SensorKind::Fan),
+            None => Resolved::Missing,
+        },
+        TempKey::Chip(chip, input) => {
+            for dir in hwmon_dirs() {
+                if fs::read_to_string(dir.join("name")).unwrap_or_default().trim() == chip {
+                    let p = dir.join(format!("{input}_input"));
+                    return Resolved::File(p, input_kind(input));
+                }
+            }
+            Resolved::Missing
         }
     }
-    None
+}
+
+fn read_resolved(r: &Resolved) -> Option<f64> {
+    match r {
+        Resolved::File(path, kind) => {
+            let v: f64 = fs::read_to_string(path).ok()?.trim().parse().ok()?;
+            Some(match kind {
+                SensorKind::Temp => v / 1000.0,
+                SensorKind::Fan => v,
+            })
+        }
+        Resolved::Missing => None,
+    }
+}
+
+/// Spawn the hwmon sampler thread. It reads the resolved sensors on
+/// `interval_s` and streams snapshots; send a new `TempReq` to re-resolve
+/// (e.g. when the configured sensor list changes).
+pub fn spawn_temps(initial: TempReq) -> (async_channel::Receiver<TempSnapshot>, mpsc::Sender<TempReq>) {
+    let (tx, rx) = async_channel::unbounded::<TempSnapshot>();
+    let (req_tx, req_rx) = mpsc::channel::<TempReq>();
+    std::thread::spawn(move || {
+        let mut req = initial;
+        let mut resolved: Vec<Resolved> = req.keys.iter().map(resolve_key).collect();
+        loop {
+            let snap: TempSnapshot = resolved.iter().map(read_resolved).collect();
+            if tx.send_blocking(snap).is_err() {
+                break;
+            }
+            let wait = Duration::from_secs_f64(req.interval_s.max(0.5));
+            match req_rx.recv_timeout(wait) {
+                Ok(new) => {
+                    req = new;
+                    resolved = req.keys.iter().map(resolve_key).collect();
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+    });
+    (rx, req_tx)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -330,22 +421,6 @@ pub fn default_sensors() -> Vec<(String, String, &'static str, &'static str)> {
         .map(|s| (s.chip.clone(), s.input.clone()));
     push(fan, "fan", "#ffbf4d");
     out
-}
-
-/// Read a sensor by chip name + input (e.g. "k10temp","temp1"). Resolves by the
-/// chip's `name` because hwmonN numbers aren't stable across boots.
-pub fn read_sensor(chip: &str, input: &str) -> Option<f64> {
-    for dir in hwmon_dirs() {
-        if fs::read_to_string(dir.join("name"))
-            .unwrap_or_default()
-            .trim()
-            == chip
-            && let Some(v) = read_input(&dir, input)
-        {
-            return Some(v);
-        }
-    }
-    None
 }
 
 /// (percent, status) of the first BAT* supply, if any (None on desktops).

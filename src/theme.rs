@@ -135,12 +135,15 @@ window.xerotop {{ background-color: transparent; }}
 .meter {{ padding: 1px 4px; }}
 .rule {{ background-color: rgba(255,255,255,0.12); min-height: 1px; min-width: 1px; margin: 2px 0; }}
 .label {{ font-weight: bold; color: {label}; }}
-.value {{ color: {value}; }}
+/* tabular (fixed-width) digits so a changing number keeps the same glyph
+   advance — combined with width_chars on the value labels, a value update is
+   an in-place repaint instead of a width change that relayouts the bar. */
+.value {{ color: {value}; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
 .meter-icon {{ color: {icon}; font-size: 20px; }}
 .weather-icon {{ color: {icon}; font-size: 28px; }}
 .graph {{ background-color: rgba(0,0,0,0.25); }}
 .bar-meter {{ background-color: transparent; }}
-.sub {{ font-size: {small}px; color: {muted}; }}
+.sub {{ font-size: {small}px; color: {muted}; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
 .task {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; padding: 1px 3px; font-size: {small}px; color: {label}; }}
 .task:hover {{ color: {value}; }}
 .task-active {{ background-color: rgba(255,255,255,0.10); color: {bright}; }}

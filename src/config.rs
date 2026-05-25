@@ -295,7 +295,14 @@ fn default_panels() -> Vec<PanelConfig> {
     .iter()
     .map(|k| PanelConfig {
         kind: (*k).to_string(),
-        interval: 1.0,
+        // temp does slow hwmon I/O (now off-thread) and temps move slowly, so
+        // it samples less often; everything else stays responsive.
+        interval: match *k {
+            "temp" => 5.0,
+            "cpu" | "mem" | "gpu" | "disk" | "top" => 2.0,
+            "bat" => 10.0,
+            _ => 1.0,
+        },
         graph: true,
         time_format: None,
         date_format: None,
@@ -442,7 +449,7 @@ graph = true
 
 [[panel]]
 type = "temp"
-interval = 2
+interval = 5
 graph = true
 
 [[panel]]

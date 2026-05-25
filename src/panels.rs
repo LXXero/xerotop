@@ -5,8 +5,7 @@
 use crate::config::{Actions, HeaderButton, HeaderSlot, PanelConfig};
 use crate::metrics::{
     Cpu, CpuCores, Disk, Net, Top, add_brightness, add_volume, battery, brightness, disk_usage,
-    fan_rpm, gpu, keyboard_leds, mem_detail, temp_cpu, temp_gpu, temp_ssd, toggle_mute, uptime,
-    volume,
+    gpu, keyboard_leds, mem_detail, toggle_mute, uptime, volume,
 };
 use crate::widgets::{Bar, Cores, Graph, GraphScale, Rgba};
 use gtk::prelude::*;
@@ -1428,7 +1427,7 @@ fn hex_rgba(hex: &str) -> Rgba {
     }
 }
 
-type TempSrc = Box<dyn Fn() -> Option<f64>>;
+use crate::metrics::{TempKey, TempReq, TempSnapshot};
 
 /// Sentinel chip name for the averaging row.
 pub const AVG_CHIP: &str = "@avg";
@@ -1444,8 +1443,49 @@ struct TempRow {
     bar: Option<Bar>,
     graph: Option<Graph>,
     val: Label,
-    src: TempSrc,
+    /// Index into the sampler snapshot, or None for the computed average row.
+    idx: Option<usize>,
     kind: RowKind,
+}
+
+type TempRenderFn = Rc<dyn Fn(&TempSnapshot)>;
+
+thread_local! {
+    static TEMP_HOST: RefCell<Option<TempHost>> = const { RefCell::new(None) };
+}
+
+#[derive(Clone)]
+struct TempHost {
+    req_tx: std::sync::mpsc::Sender<TempReq>,
+    latest: Rc<RefCell<TempSnapshot>>,
+    render: Rc<RefCell<Option<TempRenderFn>>>,
+}
+
+/// The single hwmon sampler thread, spawned on first use. Slow sensor reads
+/// happen here, not on the GTK thread; snapshots stream back over a channel.
+fn temp_host(initial: TempReq) -> TempHost {
+    TEMP_HOST.with(|cell| {
+        if cell.borrow().is_none() {
+            let (rx, req_tx) = crate::metrics::spawn_temps(initial);
+            let host = TempHost {
+                req_tx,
+                latest: Rc::new(RefCell::new(Vec::new())),
+                render: Rc::new(RefCell::new(None)),
+            };
+            let (latest, render) = (host.latest.clone(), host.render.clone());
+            gtk::glib::spawn_future_local(async move {
+                while let Ok(snap) = rx.recv().await {
+                    *latest.borrow_mut() = snap.clone();
+                    let cb = render.borrow().clone();
+                    if let Some(cb) = cb {
+                        cb(&snap);
+                    }
+                }
+            });
+            *cell.borrow_mut() = Some(host);
+        }
+        cell.borrow().as_ref().unwrap().clone()
+    })
 }
 
 /// TEMP panel: configurable temp/fan sensors as bar + value + trend, with an
@@ -1458,18 +1498,14 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     head.set_xalign(0.0);
     root.append(&head);
 
-    // (label, kind, color, value source) for each row, in display order.
-    let mut specs: Vec<(String, RowKind, Rgba, TempSrc)> = Vec::new();
+    // (label, kind, color, sensor key) per row, in display order. The key is
+    // None for the averaging row (computed on the UI side from the snapshot).
+    let mut specs: Vec<(String, RowKind, Rgba, Option<TempKey>)> = Vec::new();
     if cfg.sensors.is_empty() {
-        specs.push(("cpu".into(), RowKind::Temp, pal().red, Box::new(temp_cpu)));
-        specs.push((
-            "gpu".into(),
-            RowKind::Temp,
-            pal().violet,
-            Box::new(temp_gpu),
-        ));
-        specs.push(("ssd".into(), RowKind::Temp, pal().cyan, Box::new(temp_ssd)));
-        specs.push(("fan".into(), RowKind::Fan, pal().amber, Box::new(fan_rpm)));
+        specs.push(("cpu".into(), RowKind::Temp, pal().red, Some(TempKey::Cpu)));
+        specs.push(("gpu".into(), RowKind::Temp, pal().violet, Some(TempKey::Gpu)));
+        specs.push(("ssd".into(), RowKind::Temp, pal().cyan, Some(TempKey::Ssd)));
+        specs.push(("fan".into(), RowKind::Fan, pal().amber, Some(TempKey::Fan)));
     } else {
         let defaults = [
             pal().red,
@@ -1498,17 +1534,26 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
             } else {
                 hex_rgba(&s.color)
             };
-            let src: TempSrc = if kind == RowKind::Avg {
-                Box::new(|| None) // computed from the other temps
-            } else {
-                let (chip, input) = (s.chip.clone(), s.input.clone());
-                Box::new(move || crate::metrics::read_sensor(&chip, &input))
-            };
-            specs.push((label, kind, color, src));
+            let key = (kind != RowKind::Avg).then(|| TempKey::Chip(s.chip.clone(), s.input.clone()));
+            specs.push((label, kind, color, key));
         }
     }
 
-    let make_row = |label: &str, kind: RowKind, color: Rgba, src: TempSrc| -> TempRow {
+    // Build the sampler request (real sensors only) and remember each row's
+    // index into the resulting snapshot.
+    let mut keys: Vec<TempKey> = Vec::new();
+    let row_specs: Vec<(String, RowKind, Rgba, Option<usize>)> = specs
+        .into_iter()
+        .map(|(label, kind, color, key)| {
+            let idx = key.map(|k| {
+                keys.push(k);
+                keys.len() - 1
+            });
+            (label, kind, color, idx)
+        })
+        .collect();
+
+    let make_row = |label: &str, kind: RowKind, color: Rgba, idx: Option<usize>| -> TempRow {
         let row = GtkBox::new(Orientation::Horizontal, 4);
         let lbl = Label::new(Some(label));
         lbl.add_css_class("sub");
@@ -1556,21 +1601,32 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
             bar,
             graph: g,
             val,
-            src,
+            idx,
             kind,
         }
     };
 
-    let rows: Vec<TempRow> = specs
+    let rows: Vec<TempRow> = row_specs
         .into_iter()
-        .map(|(label, kind, color, src)| make_row(&label, kind, color, src))
+        .map(|(label, kind, color, idx)| make_row(&label, kind, color, idx))
         .collect();
 
-    let update = Box::new(move || {
+    // Sample on a worker thread; the render fn below runs when a snapshot
+    // arrives. Send the current request so config changes re-resolve sensors.
+    let host = temp_host(TempReq {
+        keys: keys.clone(),
+        interval_s: interval,
+    });
+    let _ = host.req_tx.send(TempReq {
+        keys,
+        interval_s: interval,
+    });
+
+    let render: TempRenderFn = Rc::new(move |snap: &TempSnapshot| {
         // Pass 1: real sensors (collect temps for the average).
         let mut temps: Vec<f64> = Vec::new();
         for row in rows.iter().filter(|r| r.kind != RowKind::Avg) {
-            match (row.src)() {
+            match row.idx.and_then(|i| snap.get(i).copied().flatten()) {
                 Some(v) => {
                     if row.kind == RowKind::Temp {
                         row.val.set_text(&format!("{v:.0}\u{00b0}"));
@@ -1605,10 +1661,13 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
             }
         }
     });
+    render(&host.latest.borrow());
+    *host.render.borrow_mut() = Some(render);
+
     Panel {
         root: root.upcast(),
-        interval,
-        update,
+        interval: 3600.0, // the sampler thread drives updates
+        update: Box::new(|| {}),
     }
 }
 
