@@ -165,6 +165,10 @@ thread_local! {
     /// `graph_height`; `None` = use the panel-type default passed to the graph.
     static GRAPH_H_OVERRIDE: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
 
+    /// Per-panel graph time-window override (seconds). Set in `build()` from the
+    /// panel's `graph_window`; `0.0` = use the Graph's built-in WINDOW_SECS.
+    static GRAPH_WIN_OVERRIDE: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
+
     /// Level-meter bar thickness (px), a global config knob. Set per-apply.
     static METER_H: std::cell::Cell<i32> = const { std::cell::Cell::new(7) };
 
@@ -257,6 +261,7 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
     let iv = cfg.interval.max(0.1);
     SHOW_LABEL.with(|c| c.set(cfg.show_label));
     GRAPH_H_OVERRIDE.with(|c| c.set(cfg.graph_height.filter(|&h| h > 0)));
+    GRAPH_WIN_OVERRIDE.with(|c| c.set(cfg.graph_window.filter(|&w| w > 0.0).unwrap_or(0.0)));
     let clock_fmts = || {
         (
             cfg.time_format.clone().unwrap_or_else(|| "%I:%M %p".into()),
@@ -435,7 +440,8 @@ fn graph_widget(
         // func already adapts to whatever width it's allocated. Height is the
         // panel-type default `h` unless the config overrides it.
         let h = GRAPH_H_OVERRIDE.with(|c| c.get()).unwrap_or(h);
-        let g = Graph::new(0, h, scale, gamma, specs, iv, smooth, 0.0);
+        let win = GRAPH_WIN_OVERRIDE.with(|c| c.get());
+        let g = Graph::new(0, h, scale, gamma, specs, iv, smooth, 0.0, win);
         g.area.set_hexpand(true);
         root.append(&g.area);
         SMOOTH_GRAPHS.with(|v| v.borrow_mut().push(g.clone()));
@@ -1994,6 +2000,7 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
             let trend = |row: &GtkBox, min_span: f64| -> Option<Graph> {
                 graph.then(|| {
                     let gh = GRAPH_H_OVERRIDE.with(|c| c.get()).unwrap_or(MINI_H);
+                    let win = GRAPH_WIN_OVERRIDE.with(|c| c.get());
                     let g = Graph::new(
                         30,
                         gh,
@@ -2003,6 +2010,7 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
                         interval,
                         smooth,
                         min_span,
+                        win,
                     );
                     g.area.set_valign(gtk::Align::Center);
                     row.append(&g.area);

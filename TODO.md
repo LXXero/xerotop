@@ -7,11 +7,12 @@ what's *not* built yet.
 
 Hardcoded constants that should become config/theme knobs:
 
-- **Graph time window** — currently a fixed ~60s in `widgets.rs`.
-- **EMA smoothing alpha** for the top process list (de-jitter the ordering).
+- *(optional)* **EMA smoothing** for the `top` list — only worth it if the
+  ordering ever feels jittery (it doesn't at the default 3s interval, since the
+  CPU% is already a delta over the interval). ~10 lines + an `alpha` knob if so.
 
-(Done: per-panel graph height, global meter-bar thickness, top-list count,
-vol/bri scroll step.)
+(Done: per-panel graph height, per-panel graph time window, global meter-bar
+thickness, top-list count, vol/bri scroll step.)
 
 ## Panels / widgets to add
 

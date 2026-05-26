@@ -82,7 +82,14 @@ impl Graph {
         // the baseline; this pads the range so it renders as a centered line and
         // small wiggles stay visible. 0 = no floor.
         min_span: f64,
+        // Seconds of history the graph spans; <= 0 falls back to WINDOW_SECS.
+        window_secs: f64,
     ) -> Self {
+        let window = if window_secs > 0.0 {
+            window_secs
+        } else {
+            WINDOW_SECS
+        };
         let area = DrawingArea::new();
         area.add_css_class("graph");
         area.set_content_width(w);
@@ -91,7 +98,7 @@ impl Graph {
         // Keep a little more than the visible window so the line can enter from
         // off-canvas smoothly instead of rescaling during warmup.
         let iv = interval_s.max(0.05);
-        let len = ((WINDOW_SECS / iv).ceil() as usize + 2).clamp(8, 512);
+        let len = ((window / iv).ceil() as usize + 2).clamp(8, 512);
         let series: Vec<Series> = specs
             .iter()
             .map(|(rgba, fill)| Series {
@@ -102,7 +109,7 @@ impl Graph {
             .collect();
         let series = Rc::new(RefCell::new(series));
         let times = Rc::new(RefCell::new(VecDeque::with_capacity(len)));
-        let max_age_s = WINDOW_SECS + iv * 2.0;
+        let max_age_s = window + iv * 2.0;
 
         let s = series.clone();
         let t = times.clone();
@@ -165,7 +172,7 @@ impl Graph {
                     .checked_duration_since(times[i])
                     .unwrap_or_default()
                     .as_secs_f64();
-                w - (age / WINDOW_SECS) * w
+                w - (age / window) * w
             };
             let _ = cr.save();
             cr.rectangle(0.0, 0.0, w, h);

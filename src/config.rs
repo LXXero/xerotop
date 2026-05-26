@@ -279,6 +279,10 @@ pub struct PanelConfig {
     /// default (tall for cpu/mem/…; short for cores/sensors trends).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graph_height: Option<i32>,
+    /// Override the graph's time window (seconds of history shown). None = the
+    /// built-in ~60s.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_window: Option<f64>,
     /// top panel only: how many processes to list. None = default (5).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<usize>,
@@ -378,6 +382,7 @@ fn default_panels() -> Vec<PanelConfig> {
         graph: true,
         show_label: true,
         graph_height: None,
+        graph_window: None,
         count: None,
         show_load: false,
         scroll_step: None,

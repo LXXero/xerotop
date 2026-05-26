@@ -845,6 +845,7 @@ fn layout_page(handle: &BarHandle) -> GtkBox {
             graph: true,
             show_label: true,
             graph_height: None,
+            graph_window: None,
             count: None,
             show_load: false,
             scroll_step: None,
@@ -1027,6 +1028,7 @@ fn temp_detail(handle: &BarHandle, i: usize) -> GtkBox {
     });
     page.append(&graph);
     page.append(&graph_height_row(handle, i, 14)); // MINI_H default
+    page.append(&graph_window_row(handle, i));
     page.append(&Label::new(Some(
         "Add sensors (or an 'average' row) from the dropdown; reorder/label/color each. Empty = auto-detect.",
     )));
@@ -1635,8 +1637,24 @@ fn graph_height_row(handle: &BarHandle, i: usize, default_h: i32) -> GtkBox {
     row("Graph height (px)", &sp)
 }
 
+/// A graph time-window spinner (seconds of history shown). Rebuilds the panel.
+fn graph_window_row(handle: &BarHandle, i: usize) -> GtkBox {
+    let sp = SpinButton::with_range(10.0, 600.0, 5.0);
+    sp.set_width_chars(5);
+    sp.set_value(handle.cfg.borrow().panel[i].graph_window.unwrap_or(60.0));
+    sp.set_tooltip_text(Some("Seconds of history the graph spans"));
+    let h = handle.clone();
+    sp.connect_value_changed(move |s| {
+        if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+            p.graph_window = Some(s.value());
+        }
+        h.apply();
+    });
+    row("Graph window (s)", &sp)
+}
+
 /// Generic detail for the metric panels: interval, label toggle, plus a graph
-/// toggle + height for the types that actually draw a history graph.
+/// toggle + height + window for the types that actually draw a history graph.
 fn generic_detail(handle: &BarHandle, i: usize, kind: &str) -> GtkBox {
     let page = page_box();
     page.append(&interval_row(handle, i));
@@ -1655,6 +1673,7 @@ fn generic_detail(handle: &BarHandle, i: usize, kind: &str) -> GtkBox {
         });
         page.append(&g);
         page.append(&graph_height_row(handle, i, 24)); // GRAPH_H default
+        page.append(&graph_window_row(handle, i));
     }
     page
 }
