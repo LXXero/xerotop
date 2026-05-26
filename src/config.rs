@@ -285,6 +285,9 @@ pub struct PanelConfig {
     /// uptime panel only: also show the 1/5/15-min load averages.
     #[serde(default)]
     pub show_load: bool,
+    /// vol/bri panels only: scroll-wheel step in % (None = vol 2, bri 5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scroll_step: Option<f64>,
     /// clock only: strftime time/date formats (defaults give 12-hour AM/PM).
     #[serde(default)]
     pub time_format: Option<String>,
@@ -366,6 +369,7 @@ fn default_panels() -> Vec<PanelConfig> {
         graph_height: None,
         count: None,
         show_load: false,
+        scroll_step: None,
         time_format: None,
         date_format: None,
     })

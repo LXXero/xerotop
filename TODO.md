@@ -8,10 +8,10 @@ what's *not* built yet.
 Hardcoded constants that should become config/theme knobs:
 
 - **Graph time window** — currently a fixed ~60s in `widgets.rs`.
-- **EMA smoothing alpha** for the top process list.
-- **Scroll step sizes** for volume / brightness (currently 5%).
+- **EMA smoothing alpha** for the top process list (de-jitter the ordering).
 
-(Done: per-panel graph height, global meter-bar thickness, top-list count.)
+(Done: per-panel graph height, global meter-bar thickness, top-list count,
+vol/bri scroll step.)
 
 ## Panels / widgets to add
 

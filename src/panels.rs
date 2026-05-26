@@ -270,7 +270,9 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
             None,
             None,
         )),
-        "vol" | "volume" => Some(bar_panel(
+        "vol" | "volume" => {
+            let step = cfg.scroll_step.unwrap_or(2.0).max(0.5);
+            Some(bar_panel(
             iv,
             pal().green,
             || match volume() {
@@ -291,24 +293,28 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
                 }
                 None => ("\u{f028}".to_string(), "--".to_string(), 0.0),
             },
-            Some(Box::new(|d| add_volume(d * 5.0))),
+            Some(Box::new(move |d| add_volume(d * step))),
             Some(Box::new(toggle_mute)),
             {
                 let mixer = actions.mixer.clone();
                 Some(Box::new(move || spawn(&mixer)))
             },
-        )),
-        "bri" | "brightness" => Some(bar_panel(
+        ))
+        }
+        "bri" | "brightness" => {
+            let step = cfg.scroll_step.unwrap_or(5.0).max(0.5);
+            Some(bar_panel(
             iv,
             pal().amber,
             || match brightness() {
                 Some(p) => ("\u{f185}".to_string(), format!("{p:.0}%"), p), // sun
                 None => ("\u{f185}".to_string(), "--".to_string(), 0.0),
             },
-            Some(Box::new(|d| add_brightness(d * 5.0))),
+            Some(Box::new(move |d| add_brightness(d * step))),
             None,
             None,
-        )),
+        ))
+        }
         other => {
             eprintln!("xerotop: unknown panel type '{other}', skipping");
             None

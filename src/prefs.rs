@@ -819,6 +819,7 @@ fn layout_page(handle: &BarHandle) -> GtkBox {
             graph_height: None,
             count: None,
             show_load: false,
+            scroll_step: None,
             time_format: None,
             date_format: None,
         });
@@ -1500,6 +1501,7 @@ fn header_detail(handle: &BarHandle, i: usize) -> GtkBox {
 fn vol_detail(handle: &BarHandle, i: usize) -> GtkBox {
     let page = page_box();
     page.append(&interval_row(handle, i));
+    page.append(&scroll_step_row(handle, i, 2.0));
     page.append(&command_row(
         handle,
         "Right-click mixer",
@@ -1507,6 +1509,22 @@ fn vol_detail(handle: &BarHandle, i: usize) -> GtkBox {
         |a, v| a.mixer = v,
     ));
     page
+}
+
+/// Scroll-wheel step (%) spinner for the vol/bri panels.
+fn scroll_step_row(handle: &BarHandle, i: usize, default: f64) -> GtkBox {
+    let sp = SpinButton::with_range(0.5, 50.0, 0.5);
+    sp.set_digits(1);
+    sp.set_value(handle.cfg.borrow().panel[i].scroll_step.unwrap_or(default));
+    sp.set_tooltip_text(Some("Percent change per scroll-wheel notch"));
+    let h = handle.clone();
+    sp.connect_value_changed(move |s| {
+        if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+            p.scroll_step = Some(s.value());
+        }
+        h.apply();
+    });
+    row("Scroll step (%)", &sp)
 }
 
 /// The per-panel update interval spinner (seconds).
@@ -1602,6 +1620,12 @@ fn panel_detail(handle: &BarHandle, i: usize) -> GtkBox {
         "mail" => mail_detail(handle),
         "tray" => tray_detail(handle),
         "vol" => vol_detail(handle, i),
+        "bri" | "brightness" => {
+            let page = page_box();
+            page.append(&interval_row(handle, i));
+            page.append(&scroll_step_row(handle, i, 5.0));
+            page
+        }
         // clock shares the header's format fields but has no icons.
         "clock" => {
             let page = page_box();
