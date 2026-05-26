@@ -93,8 +93,13 @@ pub struct BarConfig {
     /// Stacking layer: top (above windows) / bottom / background / overlay.
     pub layer: Layer,
     pub monitor: i32,
-    /// Continuous graph scrolling (smoother, but redraws per frame). Off = stepped.
+    /// Continuous graph scrolling on AC (smoother, but redraws per frame).
+    /// Off = stepped.
     pub smooth: bool,
+    /// Continuous graph scrolling while on battery. Default off — stepped
+    /// graphs have no per-frame wakeups. The bar rebuilds on AC<->battery
+    /// transitions to switch between this and `smooth`.
+    pub smooth_battery: bool,
     /// Spikiness of autoscaled graphs: 1.0 matches ewwii, >1 sharpens peaks
     /// and deepens valleys.
     pub graph_gamma: f64,
@@ -112,6 +117,7 @@ impl Default for BarConfig {
             layer: Layer::Top,
             monitor: 0,
             smooth: true,
+            smooth_battery: false,
             graph_gamma: 1.0,
             opacity: 0.88,
         }
@@ -442,7 +448,8 @@ length = "full"     # "full"/"max" to fill the edge, or a pixel count (e.g. 600)
 align = "center"    # start | center | end  (only used when length is fixed)
 layer = "top"       # top | bottom | background | overlay  (bottom = windows over bar)
 monitor = 0
-smooth = true       # continuous graph scrolling; false = stepped (less battery)
+smooth = true       # continuous graph scrolling on AC; false = stepped (less battery)
+smooth_battery = false  # smooth scrolling while on battery (default off = no per-frame wakeups)
 graph_gamma = 1.0   # autoscaled-graph spikiness; 1.0 = ewwii, >1 sharper peaks
 opacity = 0.88      # background opacity: 0.0 transparent .. 1.0 opaque
 

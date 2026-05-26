@@ -106,7 +106,8 @@ length = "full"     # "full" to fill the edge, or a pixel count (e.g. 600)
 align = "center"    # start | center | end  (where a fixed-length bar sits)
 layer = "top"       # top | bottom | background | overlay (bottom = windows over bar)
 monitor = 0         # output index; -1 = compositor's choice
-smooth = true       # continuous graph scrolling; false = stepped (less battery)
+smooth = true       # continuous graph scrolling on AC; false = stepped (less battery)
+smooth_battery = false  # smooth scrolling on battery too (default off = fewer wakeups)
 graph_gamma = 1.0   # graph spikiness; 1.0 = linear (ewwii), >1 sharper peaks
 opacity = 0.88      # background opacity: 0.0 transparent .. 1.0 opaque
 

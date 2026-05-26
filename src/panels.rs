@@ -156,6 +156,25 @@ thread_local! {
     /// Whether the panel currently being built should draw its label/value
     /// header row. Set per-panel in `build()`; read by `header()`.
     static SHOW_LABEL: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+
+    /// Every graph currently on the bar, so smooth scrolling can be toggled in
+    /// place on AC<->battery transitions instead of rebuilding (which would
+    /// wipe the graph history). Reset + repopulated on each `apply()` rebuild.
+    static SMOOTH_GRAPHS: RefCell<Vec<crate::widgets::Graph>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Clear the smooth-graph registry; call at the start of a panel rebuild.
+pub fn reset_smooth_registry() {
+    SMOOTH_GRAPHS.with(|v| v.borrow_mut().clear());
+}
+
+/// Toggle per-frame scroll animation on every live graph (no rebuild).
+pub fn set_all_smooth(on: bool) {
+    SMOOTH_GRAPHS.with(|v| {
+        for g in v.borrow().iter() {
+            g.set_smooth(on);
+        }
+    });
 }
 
 /// Build a panel from its config, or None for an unknown type.
@@ -335,6 +354,7 @@ fn graph_widget(
         let g = Graph::new(0, h, scale, gamma, specs, iv, smooth, 0.0);
         g.area.set_hexpand(true);
         root.append(&g.area);
+        SMOOTH_GRAPHS.with(|v| v.borrow_mut().push(g.clone()));
         g
     })
 }
@@ -1853,6 +1873,7 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
                 );
                 g.area.set_valign(gtk::Align::Center);
                 row.append(&g.area);
+                SMOOTH_GRAPHS.with(|v| v.borrow_mut().push(g.clone()));
                 g
             });
             (Some(bar), g)

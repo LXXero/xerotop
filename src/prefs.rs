@@ -35,7 +35,7 @@ const GRAPH_TYPES: [&str; 6] = ["cpu", "mem", "gpu", "disk", "net", "sensors"];
 
 /// Panel types whose label/value header row can be hidden (they build it via
 /// the shared `header()` helper, which honors the `show_label` flag).
-const LABEL_TYPES: [&str; 7] = ["cpu", "mem", "gpu", "disk", "net", "cores", "uptime"];
+const LABEL_TYPES: [&str; 6] = ["cpu", "mem", "gpu", "disk", "net", "cores"];
 
 /// Open (or re-focus) the preferences window for the given bar.
 pub fn open(handle: &BarHandle) {
@@ -291,16 +291,46 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     });
     page.append(&row("Graph spikiness (gamma)", &gamma));
 
-    // Smooth
-    let smooth = Switch::new();
-    smooth.set_active(cfg.bar.smooth);
-    smooth.set_halign(gtk::Align::Start);
+    // Smooth scroll — separate switches for AC vs battery (battery off = no
+    // per-frame wakeups). The bar rebuilds on AC<->battery to apply the change.
+    // Toggle smooth in place (no rebuild, so graph history survives); only the
+    // switch matching the current power state changes what's on screen now.
+    let smooth_ac = Switch::new();
+    smooth_ac.set_active(cfg.bar.smooth);
+    smooth_ac.set_valign(gtk::Align::Center);
     let h = handle.clone();
-    smooth.connect_active_notify(move |s| {
-        h.cfg.borrow_mut().bar.smooth = s.is_active();
-        h.apply();
+    smooth_ac.connect_active_notify(move |s| {
+        let on = s.is_active();
+        h.cfg.borrow_mut().bar.smooth = on;
+        if !crate::power::on_battery() {
+            crate::panels::set_all_smooth(on);
+        }
     });
-    page.append(&row("Smooth graph scroll", &smooth));
+    let smooth_bat = Switch::new();
+    smooth_bat.set_active(cfg.bar.smooth_battery);
+    smooth_bat.set_valign(gtk::Align::Center);
+    let h = handle.clone();
+    smooth_bat.connect_active_notify(move |s| {
+        let on = s.is_active();
+        h.cfg.borrow_mut().bar.smooth_battery = on;
+        if crate::power::on_battery() {
+            crate::panels::set_all_smooth(on);
+        }
+    });
+    let smooth_row = GtkBox::new(Orientation::Horizontal, 8);
+    let lbl = Label::new(Some("Smooth graph scroll"));
+    lbl.set_xalign(0.0);
+    lbl.set_hexpand(true);
+    smooth_row.append(&lbl);
+    let on_ac = Label::new(Some("on AC"));
+    on_ac.add_css_class("label");
+    smooth_row.append(&on_ac);
+    smooth_row.append(&smooth_ac);
+    let on_bat = Label::new(Some("on battery"));
+    on_bat.add_css_class("label");
+    smooth_row.append(&on_bat);
+    smooth_row.append(&smooth_bat);
+    page.append(&smooth_row);
 
     // Battery interval multiplier
     let mult = SpinButton::with_range(1.0, 10.0, 0.5);

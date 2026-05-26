@@ -54,6 +54,9 @@ pub struct Graph {
     cap: usize,
     times: Rc<RefCell<VecDeque<Instant>>>,
     max_age_s: f64,
+    /// The per-frame scroll tick, when smooth. Held so it can be added/removed
+    /// at runtime (e.g. switching AC<->battery) without rebuilding the graph.
+    tick: Rc<RefCell<Option<gtk::TickCallbackId>>>,
 }
 
 impl Graph {
@@ -203,19 +206,39 @@ impl Graph {
             let _ = cr.restore();
         });
 
-        if smooth {
-            area.add_tick_callback(move |area, _| {
-                area.queue_draw();
-                gtk::glib::ControlFlow::Continue
-            });
-        }
-
-        Graph {
+        let g = Graph {
             area,
             series,
             cap: len,
             times,
             max_age_s,
+            tick: Rc::new(RefCell::new(None)),
+        };
+        g.set_smooth(smooth);
+        g
+    }
+
+    /// Turn the per-frame scroll animation on/off at runtime. Removing the tick
+    /// stops all frame-clock wakeups (the graph then redraws only on `push`,
+    /// i.e. stepped); adding it resumes smooth scrolling. No rebuild, so the
+    /// graph history is preserved across the toggle.
+    pub fn set_smooth(&self, on: bool) {
+        let mut tick = self.tick.borrow_mut();
+        match (on, tick.is_some()) {
+            (true, false) => {
+                let id = self.area.add_tick_callback(move |area, _| {
+                    area.queue_draw();
+                    gtk::glib::ControlFlow::Continue
+                });
+                *tick = Some(id);
+            }
+            (false, true) => {
+                if let Some(id) = tick.take() {
+                    id.remove();
+                }
+                self.area.queue_draw(); // snap to stepped positions
+            }
+            _ => {}
         }
     }
 

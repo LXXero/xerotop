@@ -155,9 +155,16 @@ impl BarHandle {
         while let Some(child) = self.root.first_child() {
             self.root.remove(&child);
         }
+        // Smooth scrolling is power-aware: `smooth` on AC, `smooth_battery` on
+        // battery. Baked into the panels' frame clock at build time, so an
+        // AC<->battery transition rebuilds (handled in the scheduler below).
+        let on_battery = power::on_battery();
+        let (smooth_ac, smooth_bat) = (cfg.bar.smooth, cfg.bar.smooth_battery);
+        let smooth = if on_battery { smooth_bat } else { smooth_ac };
+        panels::reset_smooth_registry(); // old graphs are about to be dropped
         let mut panels: Vec<Panel> = Vec::new();
         for pcfg in cfg.panel.iter() {
-            if let Some(panel) = panels::build(pcfg, cfg.bar.smooth, &cfg.actions) {
+            if let Some(panel) = panels::build(pcfg, smooth, &cfg.actions) {
                 self.root.append(&panel.root);
                 panels.push(panel);
             }
@@ -179,11 +186,19 @@ impl BarHandle {
         let mult = cfg.power.battery_interval_multiplier.max(1.0);
         let last = Rc::new(RefCell::new(vec![Instant::now(); panels.len()]));
         drop(cfg);
+        // On AC<->battery flips, toggle smooth scrolling on the existing graphs
+        // in place (no rebuild → graph history is preserved).
+        let was_battery = Rc::new(Cell::new(on_battery));
         glib::timeout_add_local(Duration::from_millis(250), move || {
             if gen_cell.get() != generation {
                 return glib::ControlFlow::Break;
             }
-            let m = if power::on_battery() { mult } else { 1.0 };
+            let on_battery = power::on_battery();
+            if on_battery != was_battery.get() {
+                was_battery.set(on_battery);
+                panels::set_all_smooth(if on_battery { smooth_bat } else { smooth_ac });
+            }
+            let m = if on_battery { mult } else { 1.0 };
             let now = Instant::now();
             let mut last = last.borrow_mut();
             for (i, p) in panels.iter().enumerate() {
