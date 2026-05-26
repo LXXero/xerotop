@@ -6,7 +6,11 @@ PREFIX  ?= $(HOME)/.local
 BINDIR  ?= $(PREFIX)/bin
 BIN      = target/release/xerotop
 
-.PHONY: build run restart install uninstall debug check fmt clean
+# Static landing page (www/) -> the kabyhills box, served at xerotop.com via Cloudflare.
+SITE_HOST ?= kh
+SITE_ROOT ?= /srv/www/xerotop
+
+.PHONY: build run restart install uninstall debug check fmt clean deploy-site
 
 # Default: optimized build. The symlink means this alone updates `xerotop`.
 build:
@@ -44,3 +48,10 @@ fmt:
 
 clean:
 	cargo clean
+
+# Mirror www/ to the server (--delete so renamed/removed assets don't linger)
+# and restore SELinux labels so freshly-rsynced images don't 403.
+deploy-site:
+	rsync -avz --delete --rsync-path="sudo rsync" www/ $(SITE_HOST):$(SITE_ROOT)/
+	ssh $(SITE_HOST) 'sudo restorecon -Rv $(SITE_ROOT)/'
+	@echo "deployed www/ -> $(SITE_HOST):$(SITE_ROOT)  (https://xerotop.com)"
