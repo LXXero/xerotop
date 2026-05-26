@@ -2109,7 +2109,16 @@ fn top_panel(interval: f64, n: usize) -> Panel {
 }
 
 fn spawn(cmd: &str) {
-    let _ = std::process::Command::new("sh").arg("-c").arg(cmd).spawn();
+    // Reap the child: an un-waited child becomes a <defunct> zombie when it
+    // exits, and a zombie still answers to its name — e.g. a dead `swaylock`
+    // trips the lock script's `pgrep -x swaylock` single-instance guard, so the
+    // lock works exactly once. A tiny detached thread waits on each child
+    // (blocks harmlessly for long-lived ones like swaylock), so nothing lingers.
+    if let Ok(mut child) = std::process::Command::new("sh").arg("-c").arg(cmd).spawn() {
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
 }
 
 /// Header: power menu (left) · clock (center) · lock (right), with date below.
