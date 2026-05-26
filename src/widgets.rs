@@ -40,6 +40,11 @@ fn rounded_rect(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64
 
 const WINDOW_SECS: f64 = 60.0; // graph spans ~60s regardless of sample interval
 const RANGE_HEADROOM: f64 = 0.18;
+/// Cap smooth-scroll redraws at this rate (frames/sec). The frame clock ticks
+/// at the display's refresh (60/144/240 Hz); a slowly-scrolling line looks the
+/// same at ~24, so we skip the in-between frames — the win is fewer Cairo
+/// repaints (the dominant cost), not fewer tick callbacks. 24 ≈ cinematic.
+const SMOOTH_FPS: i64 = 24;
 
 struct Series {
     buf: VecDeque<f64>,
@@ -226,8 +231,16 @@ impl Graph {
         let mut tick = self.tick.borrow_mut();
         match (on, tick.is_some()) {
             (true, false) => {
-                let id = self.area.add_tick_callback(move |area, _| {
-                    area.queue_draw();
+                // Throttle to ~SMOOTH_FPS using the frame clock's timestamp, so
+                // we don't repaint on every display refresh.
+                let last = std::cell::Cell::new(0i64);
+                let min_dt = 1_000_000 / SMOOTH_FPS; // µs between redraws
+                let id = self.area.add_tick_callback(move |area, clock| {
+                    let now = clock.frame_time();
+                    if now - last.get() >= min_dt {
+                        last.set(now);
+                        area.queue_draw();
+                    }
                     gtk::glib::ControlFlow::Continue
                 });
                 *tick = Some(id);
