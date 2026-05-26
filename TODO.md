@@ -16,6 +16,11 @@ Hardcoded constants that should become config/theme knobs:
 
 ## Panels / widgets to add
 
+- **Voltages in the `sensors` panel** — the panel was renamed from `temp` to
+  `sensors` because it already does temps + fans; extend `metrics::SensorKind`
+  and the hwmon scan to also expose `inN_input` (voltage) rails as selectable
+  rows.
+
 - **Load average** — `/proc/loadavg` (1/5/15 min). Trivial native panel.
 - **Now playing (MPRIS)** — current track/artist + play-pause over D-Bus (we
   already talk D-Bus for the tray).

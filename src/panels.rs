@@ -25,6 +25,11 @@ pub struct Panel {
 const GRAPH_H: i32 = 24;
 const MINI_H: i32 = 14;
 const BAR_H: i32 = 7;
+/// Fixed width (px) of the leading icon column shared by the meter rows
+/// (bat/vol/bri), the keyboard LEDs row, and weather — so every glyph lines up
+/// in one column and the bars get the rest of the width. Narrower than the old
+/// 2-char reservation, so the bars run longer.
+const ICON_W: i32 = 24;
 /// Default full-scale fan RPM for the level bar when a sensor sets no fan_max.
 /// Covers typical case/rad/CPU fans and most AIO pumps; override per-sensor.
 const FAN_MAX_RPM: f64 = 3000.0;
@@ -147,9 +152,16 @@ fn pal() -> Palette {
     PALETTE.with(|c| c.get())
 }
 
+thread_local! {
+    /// Whether the panel currently being built should draw its label/value
+    /// header row. Set per-panel in `build()`; read by `header()`.
+    static SHOW_LABEL: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
 /// Build a panel from its config, or None for an unknown type.
 pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel> {
     let iv = cfg.interval.max(0.1);
+    SHOW_LABEL.with(|c| c.set(cfg.show_label));
     let clock_fmts = || {
         (
             cfg.time_format.clone().unwrap_or_else(|| "%I:%M %p".into()),
@@ -181,7 +193,7 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
             },
         )),
         "mem" => Some(mem_panel(iv, cfg.graph, smooth)),
-        "temp" => Some(temp_panel(iv, cfg.graph, smooth)),
+        "sensors" | "temp" => Some(temp_panel(iv, cfg.graph, smooth)),
         "cores" => Some(cores_panel(iv)),
         "uptime" => Some(uptime_panel(iv)),
         "kbd" | "leds" => Some(kbd_panel(iv)),
@@ -286,6 +298,12 @@ fn header(name: &str) -> (GtkBox, Label) {
     val.set_ellipsize(gtk::pango::EllipsizeMode::End);
     row.append(&lbl);
     row.append(&val);
+    // Per-panel "show label" toggle: hide the whole header row when off (the
+    // value Label still updates off-screen, harmlessly). Lets e.g. a `cores`
+    // panel sit under `cpu` without repeating the "CPU" header.
+    if !SHOW_LABEL.with(|c| c.get()) {
+        row.set_visible(false);
+    }
     (row, val)
 }
 
@@ -408,7 +426,7 @@ where
     row.add_css_class("meter");
     let icon = Label::new(None);
     icon.add_css_class("meter-icon");
-    icon.set_width_chars(2);
+    icon.set_size_request(ICON_W, -1);
     icon.set_xalign(0.5);
     let bar = Bar::new(0, BAR_H, 100.0, rgba);
     bar.area.set_hexpand(true);
@@ -526,12 +544,21 @@ fn uptime_panel(interval: f64) -> Panel {
 /// Keyboard lock LEDs (caps/num/scroll): lit = bright, off = dim.
 fn kbd_panel(interval: f64) -> Panel {
     let root = panel_box();
+    // Same icon column as the meter rows. The row sits inside panel_box (which
+    // already carries `.panel`'s padding) — adding .panel/.meter here too would
+    // double-pad it out of alignment with bat/vol/bri.
     let row = GtkBox::new(Orientation::Horizontal, 4);
-    let head = Label::new(Some("KBD"));
-    head.add_css_class("label");
-    head.set_xalign(0.0);
-    head.set_hexpand(true);
-    row.append(&head);
+    let icon = Label::new(Some("\u{f11c}")); //  keyboard glyph (Nerd Font)
+    icon.add_css_class("meter-icon");
+    icon.set_size_request(ICON_W, -1);
+    icon.set_xalign(0.5); // same centered column as the meter icons
+    icon.set_valign(gtk::Align::Center);
+    row.append(&icon);
+
+    // Spacer pushes the LED indicators to the right edge of the row.
+    let spacer = GtkBox::new(Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    row.append(&spacer);
 
     // One rectangular "LED" per present indicator, label inside; lit when active.
     let labels: Vec<Label> = keyboard_leds()
@@ -732,6 +759,9 @@ fn weather_panel() -> Panel {
 
     let icon = Label::new(Some("\u{e30d}"));
     icon.add_css_class("weather-icon");
+    icon.set_size_request(ICON_W, -1);
+    icon.set_xalign(0.5);
+    icon.set_valign(gtk::Align::Center);
     // Optional condition text — capped width so it never grows the bar.
     let cond = Label::new(None);
     cond.add_css_class("label");
@@ -892,8 +922,17 @@ fn disk_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     let root = panel_box();
     let (row, val) = header("DISK");
     root.append(&row);
+    // Usage level bar + the used/total text on one row, so capacity reads at a
+    // glance instead of only as "38G/1023G".
+    let usage_row = GtkBox::new(Orientation::Horizontal, 6);
+    let usage_bar = Bar::new(0, BAR_H, 100.0, pal().cyan);
+    usage_bar.area.set_hexpand(true);
+    usage_bar.area.set_valign(gtk::Align::Center);
     let usage = sub();
-    root.append(&usage);
+    usage.set_hexpand(false);
+    usage_row.append(&usage_bar.area);
+    usage_row.append(&usage);
+    root.append(&usage_row);
     let rd = graph_widget(
         &root,
         MINI_H,
@@ -917,6 +956,7 @@ fn disk_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         if let Some((pct, used, total)) = disk_usage() {
             val.set_text(&format!("{pct:.0}%"));
             usage.set_text(&format!("{used:.0}G/{total:.0}G"));
+            usage_bar.set(pct);
         }
         let (r, w) = disk.borrow_mut().sample();
         if let Some(g) = &rd {
@@ -1689,9 +1729,16 @@ fn temp_host(initial: TempReq) -> TempHost {
 fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     let cfg = TEMP_CFG.with(|c| c.borrow().clone());
     let root = panel_box();
-    let head = Label::new(Some("TEMP"));
+    let head = Label::new(Some("SENSORS"));
     head.add_css_class("label");
     head.set_xalign(0.0);
+    // Ellipsize so the longer word can't floor the bar's minimum width.
+    head.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    // Honor the per-panel "show label" toggle (the per-sensor rows are already
+    // self-labeled, so the section header is the most skippable one).
+    if !SHOW_LABEL.with(|c| c.get()) {
+        head.set_visible(false);
+    }
     root.append(&head);
 
     // (label, kind, color, sensor key) per row, in display order. The key is

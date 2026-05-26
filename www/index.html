@@ -117,7 +117,7 @@
   <p>A <span class="bright">gkrellm-style</span> system monitor for Wayland (wlroots / layer-shell),
      in <span class="bright">Rust + GTK4</span>. A vertical (or horizontal) stack of live meters —
      CPU &amp; per-core, memory, GPU, disk, network, temps/fans, battery, volume, brightness, top
-     processes, uptime, keyboard LEDs, weather — plus a real <span class="bright">taskbar</span> and
+     processes, uptime, keyboard LEDs, weather, mail — plus a real <span class="bright">taskbar</span> and
      <span class="bright">system tray</span>, all in <span class="bright">one process</span>
      with <span class="bright">zero subprocesses</span>.</p>
 
@@ -141,14 +141,15 @@
   <h2>what's in it</h2>
   <ul>
     <li>layer-shell bar on any edge — thickness, length (full / fixed), alignment, stacking layer, monitor, opacity</li>
-    <li>meters: CPU, per-core mini-bars, MEM, GPU, DISK, NET — ewwii-style dynamic min..max graphs</li>
-    <li>fully configurable temp/fan sensors (pick / label / color / reorder + averaged row)</li>
+    <li>meters: CPU, per-core mini-bars, MEM, GPU, DISK (usage bar + I/O graphs), NET — ewwii-style dynamic min..max graphs</li>
+    <li>fully configurable <code>sensors</code> panel — pick any hwmon temp/fan, label / color / reorder + averaged row</li>
     <li>battery, volume, brightness (scroll &amp; click), top processes, uptime, keyboard LEDs, weather (report on hover)</li>
+    <li>maildir unread/total (envelope + count, off-thread; hides where there's no maildir)</li>
     <li>styled clock with 4 configurable header icon slots (custom glyph + command + color each)</li>
     <li>taskbar (wlr-foreign-toplevel) and system tray (StatusNotifier) with cascading hover menus</li>
     <li>live preferences GUI (right-click the bar or <span class="bright">--prefs</span>) — General /
-        Theme / Panels / Sensors / Commands, everything applies instantly</li>
-    <li>data-driven themes (colors + font tiers); <code>Save theme as…</code> writes a theme file</li>
+        Theme / Layout (drag to reorder) / Panels (master-detail per-panel config), applies instantly</li>
+    <li>data-driven themes (colors + font tiers); save palette+fonts, or bundle the panel colors into the theme too</li>
     <li class="no">planned: load-avg / MPRIS / network-info panels, multiple bars, occlusion-aware pausing</li>
   </ul>
 

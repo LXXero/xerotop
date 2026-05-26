@@ -3,8 +3,9 @@
 A **gkrellm-style, battery-conscious system monitor** for Wayland (wlroots /
 layer-shell), in Rust + GTK4. A vertical (or horizontal) stack of live meters —
 CPU (overall + per-core), memory, GPU, disk, network, temps/fans, battery,
-volume, brightness, a top process list, uptime, keyboard LEDs, and weather —
-plus a real **taskbar** and **system tray with cascading menus**, all in **one
+volume, brightness, a top process list, uptime, keyboard LEDs, weather, and
+maildir counts — plus a real **taskbar** and **system tray with cascading
+menus**, all in **one
 process** with **zero polling subprocesses**.
 
 It's the successor to an [ewwii](https://github.com/Ewwii-sh/ewwii)-based bar
@@ -37,14 +38,17 @@ Working:
   (full or fixed px + alignment), stacking layer (top/bottom/overlay/background),
   monitor, and opacity. Graphs use ewwii-style dynamic `min..max` autoscaling.
 - meter panels: **CPU**, **CORES** (per-core mini bars), **MEM**, **GPU**,
-  **DISK**, **NET**
-- **TEMP/sensors**: fully configurable — pick any hwmon temp/fan from a list,
+  **DISK** (usage bar + read/write graphs), **NET**. Each metric panel has a
+  per-panel "show label" toggle, so e.g. `cores` can sit under `cpu` headerless.
+- **SENSORS** (`sensors`, formerly `temp`): fully configurable — pick any hwmon temp/fan from a list,
   label/color/reorder each, plus an optional averaged row (bar + trend + value)
 - **BAT / VOL / BRI** as icon + rounded level bar + value, with **scroll/click
   control** (volume via ALSA, brightness via `brightnessctl`, right-click volume
   opens a configurable mixer)
 - **TOP** process list, **UPTIME**, **keyboard LEDs** (caps/num/scroll),
   **WEATHER** (wttr.in, no API key — compact icon + temp, full report on hover)
+- **MAIL**: maildir unread/total (envelope + count, yellow when unread); counts
+  off-thread, hides where there's no maildir, click runs a configured command
 - **header**: a styled clock + date with **4 configurable icon slots** (left/right
   of both the time and date), each a custom glyph + command + color (`@menu`
   opens the power popover)
@@ -55,11 +59,17 @@ Working:
   and full `AboutToShow` support; menu item ids are resolved by path from the
   freshest layout so apps that renumber mid-open (nm-applet, …) don't misfire
 - **live preferences GUI** — right-click any dead space on the bar (gkrellm-style)
-  for Preferences/Quit, or run `xerotop --prefs`. Five tabs (General / Theme /
-  Panels / Sensors / Commands); every control applies instantly, no restart.
+  for Preferences/Quit, or run `xerotop --prefs`. Four tabs: **General** (bar
+  geometry + power), **Theme**, **Layout** (which panels, drag to reorder), and
+  **Panels** (a master-detail pane — pick a panel on the left, configure it on
+  the right: interval, graph + label toggles, sensors, weather, mail, tray,
+  header icons + commands, volume mixer). Every control applies instantly.
 - **themes** — colors + font tiers (small/normal/large) are data, not baked CSS.
-  The built-in `default` reproduces the dark look; the GUI's "Save theme as…"
-  writes `~/.config/xerotop/themes/<name>.toml`, selectable by name.
+  The built-in `default` reproduces the dark look. The Theme tab has two save
+  buttons: **Save theme** (palette + fonts) and **Save + panel colors** (also
+  bundles the current sensor colors + header buttons); both write
+  `~/.config/xerotop/themes/<name>.toml`. Loading a theme that carries panel
+  colors applies them, so a theme can capture a full look, not just the palette.
 
 Planned (see `TODO.md`): more configurable constants, load-average / MPRIS /
 network-info panels, occlusion-aware pausing, multiple bars, horizontal polish.
@@ -112,13 +122,18 @@ location = ""       # city / "lat,lon"; blank = auto by IP
 units = "auto"      # auto | c | f
 interval_min = 30
 
+[mail]
+dir = ""                       # maildir root (has new/ + cur/); blank = ~/.maildir
+command = "xfce4-terminal -e mutt"  # run on click
+interval_s = 5
+
 [actions]                           # logout/reboot/shutdown power the @menu popover
 lock = "loginctl lock-session"
 mixer = "pavucontrol"               # right-click the volume meter
 # logout / reboot / shutdown ...
 
-# Sensors and header icons are managed in the GUI (Sensors / Commands tabs);
-# they write [[sensor]] and [[header_button]] entries here.
+# Sensors and header icons are managed in the GUI (the Panels tab's per-panel
+# detail); they write [[sensor]] and [[header_button]] entries here.
 
 [[panel]]                           # panels render in order (top→bottom / left→right)
 type = "header"
@@ -128,8 +143,8 @@ date_format = "%a %d %b"
 type = "cpu"
 interval = 2                        # seconds; may be fractional (0.5 = 2/sec)
 graph = true
-# ... cores, mem, gpu, disk, net, temp, weather, uptime, kbd, bat, vol, bri,
-#     top, win (taskbar), tray
+# ... cores, mem, gpu, disk, net, sensors, weather, mail, uptime, kbd, bat, vol,
+#     bri, top, win (taskbar), tray
 ```
 
 ## Architecture
@@ -145,6 +160,6 @@ graph = true
 | `tray.rs`    | tokio thread: StatusNotifier host (`system-tray`) → item+menu snapshots / actions |
 | `weather.rs` | background thread: wttr.in fetch → weather snapshots over a channel |
 | `theme.rs`   | `Theme` (colors + font tiers) → generated stylesheet + graph palette; loads theme files |
-| `prefs.rs`   | live preferences GUI (General / Theme / Panels / Sensors / Commands), mutates state + `apply()` |
+| `prefs.rs`   | live preferences GUI (General / Theme / Layout / Panels master-detail), mutates state + `apply()` |
 | `bar.rs`     | layer-shell window, `BarHandle::apply()` live re-render, right-click menu, scheduler |
 | `main.rs`    | app bootstrap, `--prefs` |

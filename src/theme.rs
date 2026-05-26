@@ -4,6 +4,7 @@
 //! `~/.config/xerotop/themes/<name>.toml`; the built-in default reproduces the
 //! original dark look.
 
+use crate::config::{HeaderButton, TempSensor};
 use crate::widgets::Rgba;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -21,10 +22,6 @@ pub struct Theme {
     pub label: String,
     /// Secondary/dim text (sub-values, minimized windows).
     pub muted: String,
-    /// Lock button (brass by default).
-    pub accent_lock: String,
-    /// Power button (green by default).
-    pub accent_power: String,
     // Font sizes (px) — gkrellm-style tiers applied to text roles:
     // small = sub-values, date, taskbar; normal = labels/values/base;
     // large = the clock time.
@@ -39,6 +36,16 @@ pub struct Theme {
     pub violet: String,
     /// Keyboard-LED "on"/glow color.
     pub led_on: String,
+    // Optional panel-color defaults the theme can carry. Written only by the
+    // "Save + panel colors" button; when present, an interactive theme switch
+    // applies them to the config (so a theme can capture a full look, not just
+    // the base palette). `None` (the usual case) = palette + fonts only. These
+    // must stay last in the struct — TOML arrays-of-tables serialize after the
+    // scalar fields.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sensors: Option<Vec<TempSensor>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<Vec<HeaderButton>>,
 }
 
 impl Default for Theme {
@@ -49,8 +56,6 @@ impl Default for Theme {
             foreground: "#ccddee".into(),
             label: "#99aabb".into(),
             muted: "#667788".into(),
-            accent_lock: "#d4af37".into(),
-            accent_power: "#5fd75f".into(),
             font_small: 10,
             font_normal: 12,
             font_large: 18,
@@ -60,6 +65,8 @@ impl Default for Theme {
             red: "#ff7366".into(),
             violet: "#c78cff".into(),
             led_on: "#5fd75f".into(),
+            sensors: None,
+            header: None,
         }
     }
 }
@@ -146,7 +153,11 @@ window.xerotop {{ background-color: transparent; }}
    an in-place repaint instead of a width change that relayouts the bar. */
 .value {{ color: {value}; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
 .meter-icon {{ color: {icon}; font-size: 20px; }}
-.weather-icon {{ color: {icon}; font-size: 28px; }}
+/* weather (nf-weather e3xx) glyphs render smaller per-em, so bump the font to
+   match the meter/keyboard glyphs' visual size; the negative margins claw back
+   the line-box padding the bigger font adds, so the weather row stays the same
+   height as the meter rows instead of growing. */
+.weather-icon {{ color: {icon}; font-size: 30px; margin-top: -6px; margin-bottom: -6px; }}
 .mail-icon {{ color: #e6f0ff; font-size: 20px; }}
 .mail-unread {{ color: #ffbf4d; font-weight: bold; }}
 .graph {{ background-color: rgba(0,0,0,0.25); }}
@@ -177,10 +188,6 @@ window.xerotop {{ background-color: transparent; }}
 .clock-daynum {{ font-weight: bold; font-size: {normal}px; color: {label}; }}
 .hbtn {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; min-width: 0; padding: 0 4px; color: {label}; font-size: 17px; }}
 .hbtn:hover {{ color: {bright}; }}
-.lock {{ color: {lock}; }}
-.lock:hover {{ color: {lock_hi}; }}
-.power {{ color: {power}; }}
-.power:hover {{ color: {power_hi}; }}
 .menu {{ padding: 4px; }}
 .menu-item {{ background: transparent; border: none; box-shadow: none; color: {value}; padding: 4px 14px; }}
 .menu-item:hover {{ background-color: rgba(255,255,255,0.10); }}
@@ -192,10 +199,6 @@ window.xerotop {{ background-color: transparent; }}
             label = norm(&self.label),
             value = norm(&self.foreground),
             muted = norm(&self.muted),
-            lock = norm(&self.accent_lock),
-            lock_hi = lighten(&self.accent_lock, 0.25),
-            power = norm(&self.accent_power),
-            power_hi = lighten(&self.accent_power, 0.25),
             led = norm(&self.led_on),
             led_border = lighten(&self.led_on, 0.25),
         )

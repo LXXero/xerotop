@@ -262,6 +262,10 @@ pub struct PanelConfig {
     pub interval: f64,
     #[serde(default = "default_true")]
     pub graph: bool,
+    /// Show the panel's label/value header row. Off → just the graphic (e.g. a
+    /// `cores` panel under `cpu` reads as one block, no repeated "CPU" header).
+    #[serde(default = "default_true")]
+    pub show_label: bool,
     /// clock only: strftime time/date formats (defaults give 12-hour AM/PM).
     #[serde(default)]
     pub time_format: Option<String>,
@@ -307,7 +311,7 @@ impl Default for MailConfig {
     fn default() -> Self {
         Self {
             dir: String::new(),
-            command: "xterm -e mutt".into(),
+            command: "xfce4-terminal -e mutt".into(),
             interval_s: 5.0,
         }
     }
@@ -324,7 +328,7 @@ pub struct FontConfig {
 
 fn default_panels() -> Vec<PanelConfig> {
     [
-        "header", "cpu", "mem", "gpu", "disk", "net", "temp", "bat", "vol", "bri", "top", "win",
+        "header", "cpu", "mem", "gpu", "disk", "net", "sensors", "bat", "vol", "bri", "top", "win",
         "tray",
     ]
     .iter()
@@ -333,12 +337,13 @@ fn default_panels() -> Vec<PanelConfig> {
         // temp does slow hwmon I/O (now off-thread) and temps move slowly, so
         // it samples less often; everything else stays responsive.
         interval: match *k {
-            "temp" => 5.0,
+            "sensors" => 5.0,
             "cpu" | "mem" | "gpu" | "disk" | "top" => 2.0,
             "bat" => 10.0,
             _ => 1.0,
         },
         graph: true,
+        show_label: true,
         time_format: None,
         date_format: None,
     })
@@ -491,7 +496,7 @@ interval = 1
 graph = true
 
 [[panel]]
-type = "temp"
+type = "sensors"
 interval = 5
 graph = true
 

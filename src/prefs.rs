@@ -26,12 +26,16 @@ thread_local! {
 }
 
 const PANEL_TYPES: [&str; 19] = [
-    "header", "clock", "cpu", "cores", "mem", "gpu", "disk", "net", "temp", "weather", "mail",
+    "header", "clock", "cpu", "cores", "mem", "gpu", "disk", "net", "sensors", "weather", "mail",
     "uptime", "kbd", "bat", "vol", "bri", "top", "win", "tray",
 ];
 
 /// Panel types that have a history graph (so the "graph" toggle is meaningful).
-const GRAPH_TYPES: [&str; 6] = ["cpu", "mem", "gpu", "disk", "net", "temp"];
+const GRAPH_TYPES: [&str; 6] = ["cpu", "mem", "gpu", "disk", "net", "sensors"];
+
+/// Panel types whose label/value header row can be hidden (they build it via
+/// the shared `header()` helper, which honors the `show_label` flag).
+const LABEL_TYPES: [&str; 7] = ["cpu", "mem", "gpu", "disk", "net", "cores", "uptime"];
 
 /// Open (or re-focus) the preferences window for the given bar.
 pub fn open(handle: &BarHandle) {
@@ -43,14 +47,13 @@ pub fn open(handle: &BarHandle) {
     let notebook = Notebook::new();
     notebook.append_page(&general_page(handle), Some(&Label::new(Some("General"))));
     notebook.append_page(&theme_page(handle), Some(&Label::new(Some("Theme"))));
-    notebook.append_page(&panels_page(handle), Some(&Label::new(Some("Panels"))));
-    notebook.append_page(&temp_page(handle), Some(&Label::new(Some("Sensors"))));
-    notebook.append_page(&commands_page(handle), Some(&Label::new(Some("Commands"))));
+    notebook.append_page(&layout_page(handle), Some(&Label::new(Some("Layout"))));
+    notebook.append_page(&panels_config_page(handle), Some(&Label::new(Some("Panels"))));
 
     let window = Window::builder()
         .title("xerotop preferences")
-        .default_width(440)
-        .default_height(580)
+        .default_width(600)
+        .default_height(620)
         .child(&notebook)
         .build();
     window.connect_close_request(|_| {
@@ -310,7 +313,20 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     });
     page.append(&row("On-battery interval ×", &mult));
 
-    // Tray layout
+    drop(cfg);
+    page.append(&save_bar(handle));
+    page
+}
+
+// ---- per-panel detail fragments (used by the Panels config tab) -------------
+// Tray and weather config used to live on the General page; they're now part of
+// the relevant panel's detail pane, alongside that panel's interval/graph.
+
+/// Tray panel options: icons-per-row + icon size.
+fn tray_detail(handle: &BarHandle) -> GtkBox {
+    let page = page_box();
+    let cfg = handle.cfg.borrow();
+
     let tray_cols = SpinButton::with_range(1.0, 32.0, 1.0);
     tray_cols.set_value(cfg.tray.columns as f64);
     let h = handle.clone();
@@ -318,7 +334,7 @@ fn general_page(handle: &BarHandle) -> GtkBox {
         h.cfg.borrow_mut().tray.columns = s.value() as i32;
         h.apply();
     });
-    page.append(&row("Tray icons per row", &tray_cols));
+    page.append(&row("Icons per row", &tray_cols));
 
     let tray_size = SpinButton::with_range(8.0, 64.0, 1.0);
     tray_size.set_value(cfg.tray.icon_size as f64);
@@ -327,9 +343,15 @@ fn general_page(handle: &BarHandle) -> GtkBox {
         h.cfg.borrow_mut().tray.icon_size = s.value() as i32;
         h.apply();
     });
-    page.append(&row("Tray icon size (px)", &tray_size));
+    page.append(&row("Icon size (px)", &tray_size));
+    page
+}
 
-    // Weather (for the "weather" panel; fetched from wttr.in).
+/// Weather panel options: location / units / refresh / condition text.
+fn weather_detail(handle: &BarHandle) -> GtkBox {
+    let page = page_box();
+    let cfg = handle.cfg.borrow();
+
     let wx_loc = Entry::new();
     wx_loc.set_text(&cfg.weather.location);
     wx_loc.set_hexpand(true);
@@ -339,7 +361,7 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     wx_loc.connect_changed(move |e| h.cfg.borrow_mut().weather.location = e.text().to_string());
     let h = handle.clone();
     wx_loc.connect_activate(move |_| h.apply());
-    page.append(&row("Weather location", &wx_loc));
+    page.append(&row("Location", &wx_loc));
 
     let wx_units = DropDown::from_strings(&["auto", "°C", "°F"]);
     wx_units.set_selected(match cfg.weather.units.as_str() {
@@ -357,7 +379,7 @@ fn general_page(handle: &BarHandle) -> GtkBox {
         .into();
         h.apply();
     });
-    page.append(&row("Weather units", &wx_units));
+    page.append(&row("Units", &wx_units));
 
     let wx_iv = SpinButton::with_range(5.0, 240.0, 5.0);
     wx_iv.set_value(cfg.weather.interval_min);
@@ -366,11 +388,10 @@ fn general_page(handle: &BarHandle) -> GtkBox {
         h.cfg.borrow_mut().weather.interval_min = s.value();
         h.apply();
     });
-    page.append(&row("Weather refresh (min)", &wx_iv));
+    page.append(&row("Refresh (min)", &wx_iv));
 
-    let wx_cond = CheckButton::with_label(
-        "Show condition text (else icon + temp only; full report on hover)",
-    );
+    let wx_cond =
+        CheckButton::with_label("Show condition text (else icon + temp only; report on hover)");
     wx_cond.set_active(cfg.weather.show_condition);
     let h = handle.clone();
     wx_cond.connect_toggled(move |c| {
@@ -378,9 +399,44 @@ fn general_page(handle: &BarHandle) -> GtkBox {
         h.apply();
     });
     page.append(&wx_cond);
+    page
+}
 
-    drop(cfg);
-    page.append(&save_bar(handle));
+/// Mail panel options: maildir path / click command / recount interval.
+fn mail_detail(handle: &BarHandle) -> GtkBox {
+    let page = page_box();
+    let cfg = handle.cfg.borrow();
+
+    let dir = Entry::new();
+    dir.set_text(&cfg.mail.dir);
+    dir.set_hexpand(true);
+    dir.set_placeholder_text(Some("maildir root — blank = ~/.maildir"));
+    dir.set_tooltip_text(Some("Press Enter to apply"));
+    let h = handle.clone();
+    dir.connect_changed(move |e| h.cfg.borrow_mut().mail.dir = e.text().to_string());
+    let h = handle.clone();
+    dir.connect_activate(move |_| h.apply());
+    page.append(&row("Maildir", &dir));
+
+    let cmd = Entry::new();
+    cmd.set_text(&cfg.mail.command);
+    cmd.set_hexpand(true);
+    cmd.set_placeholder_text(Some("command run on click"));
+    cmd.set_tooltip_text(Some("Press Enter to apply"));
+    let h = handle.clone();
+    cmd.connect_changed(move |e| h.cfg.borrow_mut().mail.command = e.text().to_string());
+    let h = handle.clone();
+    cmd.connect_activate(move |_| h.apply());
+    page.append(&row("Click command", &cmd));
+
+    let iv = SpinButton::with_range(1.0, 600.0, 1.0);
+    iv.set_value(cfg.mail.interval_s);
+    let h = handle.clone();
+    iv.connect_value_changed(move |s| {
+        h.cfg.borrow_mut().mail.interval_s = s.value();
+        h.apply();
+    });
+    page.append(&row("Recount every (s)", &iv));
     page
 }
 
@@ -390,7 +446,7 @@ type Getter = fn(&Theme) -> String;
 type Setter = fn(&mut Theme, String);
 
 #[allow(clippy::type_complexity)]
-const COLOR_FIELDS: [(&str, Getter, Setter); 12] = [
+const COLOR_FIELDS: [(&str, Getter, Setter); 10] = [
     (
         "Background",
         |t| t.background.clone(),
@@ -403,16 +459,6 @@ const COLOR_FIELDS: [(&str, Getter, Setter); 12] = [
     ),
     ("Header / accent", |t| t.label.clone(), |t, v| t.label = v),
     ("Muted", |t| t.muted.clone(), |t, v| t.muted = v),
-    (
-        "Lock accent",
-        |t| t.accent_lock.clone(),
-        |t, v| t.accent_lock = v,
-    ),
-    (
-        "Power accent",
-        |t| t.accent_power.clone(),
-        |t, v| t.accent_power = v,
-    ),
     ("Graph green", |t| t.green.clone(), |t, v| t.green = v),
     ("Graph cyan", |t| t.cyan.clone(), |t, v| t.cyan = v),
     ("Graph amber", |t| t.amber.clone(), |t, v| t.amber = v),
@@ -480,9 +526,16 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
     page.append(&row("Font normal (labels, values)", &f_normal));
     page.append(&row("Font large (clock)", &f_large));
 
-    // One color button per theme color; remembered so loading a theme refreshes them.
+    // One color button per theme color, laid out in two columns so the list
+    // doesn't run off the bottom of the tab. Labels are left-aligned (the label
+    // columns expand) so the swatches line up at the right of each column.
+    // Remembered so loading a theme refreshes every button.
     let buttons: Rc<RefCell<Vec<(Getter, ColorDialogButton)>>> = Rc::new(RefCell::new(Vec::new()));
-    for (name, get, set) in COLOR_FIELDS {
+    let grid = gtk::Grid::new();
+    grid.set_row_spacing(6);
+    grid.set_column_spacing(16);
+    grid.set_margin_top(4);
+    for (i, (name, get, set)) in COLOR_FIELDS.into_iter().enumerate() {
         let btn = ColorDialogButton::new(Some(ColorDialog::new()));
         btn.set_rgba(&hex_to_rgba(&get(&handle.theme.borrow())));
         let h = handle.clone();
@@ -498,9 +551,16 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
             }
             h.apply();
         });
-        page.append(&row(name, &btn));
+        let lbl = Label::new(Some(name));
+        lbl.set_xalign(0.0);
+        lbl.set_hexpand(true);
+        let r = (i / 2) as i32;
+        let c = (i % 2) as i32 * 2; // left pair = cols 0/1, right pair = cols 2/3
+        grid.attach(&lbl, c, r, 1, 1);
+        grid.attach(&btn, c + 1, r, 1, 1);
         buttons.borrow_mut().push((get, btn));
     }
+    page.append(&grid);
 
     // Loading a theme: resolve the file, swap it in, refresh every widget.
     let h = handle.clone();
@@ -520,6 +580,15 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
         };
         let t = crate::theme::resolve(&name);
         h.cfg.borrow_mut().theme = name.clone();
+        // A theme that bundles panel colors applies them to the live config
+        // (sensor colors / header buttons), so switching themes can carry a full
+        // look. Themes without a bundle leave your panels untouched.
+        if let Some(s) = &t.sensors {
+            h.cfg.borrow_mut().temp.sensors = s.clone();
+        }
+        if let Some(hdr) = &t.header {
+            h.cfg.borrow_mut().header = hdr.clone();
+        }
         ld.set(true);
         font_c.set_font_desc(&FontDescription::from_string(&t.font_family));
         fs_c.set_value(t.font_small as f64);
@@ -535,38 +604,71 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
     // Prepend the selector row at the top of the page.
     page.prepend(&row("Theme", &selector));
 
-    // Save-theme-as bar.
+    // Save-theme-as bar — two buttons: palette+fonts only, or also bundling the
+    // current panel colors (sensor colors + header buttons) into the theme file.
     let save_row = GtkBox::new(Orientation::Horizontal, 8);
     save_row.set_margin_top(8);
     let name_entry = Entry::new();
     name_entry.set_placeholder_text(Some("theme name"));
     name_entry.set_hexpand(true);
-    let save_theme = Button::with_label("Save theme as…");
-    let h = handle.clone();
-    let entry_c = name_entry.clone();
-    let selector_c = selector.clone();
-    save_theme.connect_clicked(move |_| {
-        let name = entry_c.text().trim().to_string();
-        // Reject "default" and anything that isn't a strict slug (path-safe).
-        if name == "default" || !crate::theme::is_valid_name(&name) {
-            entry_c.set_text("");
-            entry_c.set_placeholder_text(Some("use letters, digits, - or _ (not 'default')"));
-            return;
-        }
-        if let Err(e) = save_theme_file(&name, &h.theme.borrow()) {
-            eprintln!("xerotop: save theme failed: {e}");
-            return;
-        }
-        h.cfg.borrow_mut().theme = name.clone();
-        // Rebuild the selector to include the new name and select it.
-        let names = theme_names();
-        selector_c.set_model(Some(&gtk::StringList::new(
-            &names.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-        )));
-        selector_c.set_selected(names.iter().position(|n| *n == name).unwrap_or(0) as u32);
-    });
+
+    // Shared save routine; `bundle_panels` decides whether the theme carries the
+    // current sensor/header colors. Stamping/clearing the bundle on the live
+    // theme keeps later "Save to config.toml" re-saves consistent.
+    let save_with: Rc<dyn Fn(bool)> = {
+        let h = handle.clone();
+        let entry_c = name_entry.clone();
+        let selector_c = selector.clone();
+        Rc::new(move |bundle_panels: bool| {
+            let name = entry_c.text().trim().to_string();
+            // Reject "default" and anything that isn't a strict slug (path-safe).
+            if name == "default" || !crate::theme::is_valid_name(&name) {
+                entry_c.set_text("");
+                entry_c.set_placeholder_text(Some("use letters, digits, - or _ (not 'default')"));
+                return;
+            }
+            {
+                let sensors = h.cfg.borrow().temp.sensors.clone();
+                let header = h.cfg.borrow().header.clone();
+                let mut t = h.theme.borrow_mut();
+                if bundle_panels {
+                    t.sensors = Some(sensors);
+                    t.header = Some(header);
+                } else {
+                    t.sensors = None;
+                    t.header = None;
+                }
+            }
+            if let Err(e) = save_theme_file(&name, &h.theme.borrow()) {
+                eprintln!("xerotop: save theme failed: {e}");
+                return;
+            }
+            h.cfg.borrow_mut().theme = name.clone();
+            // Rebuild the selector to include the new name and select it.
+            let names = theme_names();
+            selector_c.set_model(Some(&gtk::StringList::new(
+                &names.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+            )));
+            selector_c.set_selected(names.iter().position(|n| *n == name).unwrap_or(0) as u32);
+        })
+    };
+
+    let save_theme = Button::with_label("Save theme");
+    save_theme.set_tooltip_text(Some("Write palette + fonts to themes/<name>.toml"));
+    let sw = save_with.clone();
+    save_theme.connect_clicked(move |_| sw(false));
+
+    let save_panels = Button::with_label("Save + panel colors");
+    save_panels.set_tooltip_text(Some(
+        "Also bundle the current sensor colors + header buttons, so loading this \
+         theme restores them",
+    ));
+    let sw = save_with.clone();
+    save_panels.connect_clicked(move |_| sw(true));
+
     save_row.append(&name_entry);
     save_row.append(&save_theme);
+    save_row.append(&save_panels);
     page.append(&save_row);
 
     page.append(&save_bar(handle));
@@ -598,13 +700,15 @@ fn save_theme_file(name: &str, theme: &Theme) -> std::io::Result<()> {
 
 // ---- Panels page -----------------------------------------------------------
 
-fn panels_page(handle: &BarHandle) -> GtkBox {
+fn layout_page(handle: &BarHandle) -> GtkBox {
+    ensure_prefs_css();
     let page = page_box();
     page.append(&Label::new(Some(
-        "Panels render top-to-bottom in this order.",
+        "Which panels are on the bar, and their order (top-to-bottom). \
+         Drag the handle to reorder. Per-panel options live in the Panels tab.",
     )));
 
-    // Column header explaining each control.
+    // Column header.
     let head = GtkBox::new(Orientation::Horizontal, 6);
     let mk = |text: &str, chars: i32, expand: bool| {
         let l = Label::new(Some(text));
@@ -616,9 +720,8 @@ fn panels_page(handle: &BarHandle) -> GtkBox {
         l.set_hexpand(expand);
         l
     };
-    head.append(&mk("panel", 8, false));
-    head.append(&mk("interval (s)", 12, false));
-    head.append(&mk("", 0, true)); // graph column / spacer
+    head.append(&mk("#  ⠿ panel", 12, false));
+    head.append(&mk("", 0, true)); // spacer
     head.append(&mk("move · delete", 0, false));
     page.append(&head);
 
@@ -641,6 +744,7 @@ fn panels_page(handle: &BarHandle) -> GtkBox {
             kind,
             interval: 1.0,
             graph: true,
+            show_label: true,
             time_format: None,
             date_format: None,
         });
@@ -669,44 +773,62 @@ fn panel_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> GtkBox {
     let r = GtkBox::new(Orientation::Horizontal, 6);
     r.set_margin_top(2);
     r.set_margin_bottom(2);
-    let (kind, interval, graph) = {
-        let cfg = handle.cfg.borrow();
-        let p = &cfg.panel[i];
-        (p.kind.clone(), p.interval, p.graph)
-    };
+    let kind = handle.cfg.borrow().panel[i].kind.clone();
+
+    // Index (monospace, right-aligned) so the rows line up like the Panels tab.
+    let num = Label::new(Some(&i.to_string()));
+    num.add_css_class("panel-idx");
+    num.set_width_chars(2);
+    num.set_xalign(1.0);
+    r.append(&num);
+
+    // Grab handle — the drag affordance.
+    let grip = Label::new(Some("\u{2807}")); // ⠇-ish dotted grip
+    grip.add_css_class("drag-handle");
+    r.append(&grip);
 
     let name = Label::new(Some(&kind));
     name.set_xalign(0.0);
     name.set_width_chars(8);
     r.append(&name);
 
-    let iv = SpinButton::with_range(0.1, 600.0, 0.5);
-    iv.set_digits(1);
-    iv.set_value(interval);
-    iv.set_width_chars(11);
-    iv.set_tooltip_text(Some("Seconds between updates for this panel"));
-    let h = handle.clone();
-    iv.connect_value_changed(move |s| {
-        h.cfg.borrow_mut().panel[i].interval = s.value();
-        h.apply();
-    });
-    r.append(&iv);
-
-    // Only panels that actually draw a history graph get the toggle.
-    if GRAPH_TYPES.contains(&kind.as_str()) {
-        let g = CheckButton::with_label("graph");
-        g.set_active(graph);
-        let h = handle.clone();
-        g.connect_toggled(move |c| {
-            h.cfg.borrow_mut().panel[i].graph = c.is_active();
-            h.apply();
-        });
-        r.append(&g);
-    }
-
     let spacer = GtkBox::new(Orientation::Horizontal, 0);
     spacer.set_hexpand(true);
     r.append(&spacer);
+
+    // --- drag to reorder -----------------------------------------------------
+    // The row is a drag source carrying its own index; every row is also a drop
+    // target that moves the dragged panel to this position, then rebuilds.
+    let drag = gtk::DragSource::new();
+    drag.set_actions(gtk::gdk::DragAction::MOVE);
+    drag.connect_prepare(move |_, _, _| {
+        Some(gtk::gdk::ContentProvider::for_value(&(i as i32).to_value()))
+    });
+    r.add_controller(drag);
+
+    let drop_target = gtk::DropTarget::new(i32::static_type(), gtk::gdk::DragAction::MOVE);
+    let h = handle.clone();
+    let list_c = list.clone();
+    drop_target.connect_drop(move |_, value, _, _| {
+        let Ok(from) = value.get::<i32>() else {
+            return false;
+        };
+        let from = from as usize;
+        if from != i {
+            {
+                let mut cfg = h.cfg.borrow_mut();
+                if from < cfg.panel.len() {
+                    let item = cfg.panel.remove(from);
+                    let to = i.min(cfg.panel.len());
+                    cfg.panel.insert(to, item);
+                }
+            }
+            h.apply();
+            populate_panels(&h, &list_c);
+        }
+        true
+    });
+    r.add_controller(drop_target);
 
     let up = Button::from_icon_name("go-up-symbolic");
     up.set_sensitive(i > 0);
@@ -762,7 +884,7 @@ fn default_temp_sensors() -> Vec<TempSensor> {
         .collect()
 }
 
-fn temp_page(handle: &BarHandle) -> GtkBox {
+fn temp_detail(handle: &BarHandle, i: usize) -> GtkBox {
     // Nothing configured yet = auto-detect. Make those defaults visible/editable
     // by seeding the list with them, so adding a sensor appends instead of
     // silently replacing the whole auto set. (Reproduces the same sensors, so
@@ -772,6 +894,18 @@ fn temp_page(handle: &BarHandle) -> GtkBox {
     }
 
     let page = page_box();
+    page.append(&interval_row(handle, i));
+    page.append(&show_label_check(handle, i));
+    let graph = CheckButton::with_label("Show history graph");
+    graph.set_active(handle.cfg.borrow().panel[i].graph);
+    let h = handle.clone();
+    graph.connect_toggled(move |c| {
+        if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+            p.graph = c.is_active();
+        }
+        h.apply();
+    });
+    page.append(&graph);
     page.append(&Label::new(Some(
         "Add sensors (or an 'average' row) from the dropdown; reorder/label/color each. Empty = auto-detect.",
     )));
@@ -840,8 +974,6 @@ fn temp_page(handle: &BarHandle) -> GtkBox {
     });
     add_row.append(&reset);
     page.append(&add_row);
-
-    page.append(&save_bar(handle));
     page
 }
 
@@ -1154,7 +1286,47 @@ fn header_slot_row(handle: &BarHandle, slot: HeaderSlot, name: &str) -> GtkBox {
     r
 }
 
-fn commands_page(handle: &BarHandle) -> GtkBox {
+/// A labeled entry editing an `Option<String>` field of `panel[i]` (the clock
+/// formats). Blank → `None` (falls back to the panel's built-in default).
+fn fmt_row(
+    handle: &BarHandle,
+    label: &str,
+    placeholder: &str,
+    initial: Option<&str>,
+    set: fn(&mut PanelConfig, Option<String>),
+) -> GtkBox {
+    let entry = Entry::new();
+    entry.set_text(initial.unwrap_or(""));
+    entry.set_hexpand(true);
+    entry.set_placeholder_text(Some(placeholder));
+    entry.set_tooltip_text(Some("strftime format; Enter to apply"));
+    let h = handle.clone();
+    let idx = current_panel_index();
+    entry.connect_changed(move |e| {
+        let t = e.text().to_string();
+        let v = if t.trim().is_empty() { None } else { Some(t) };
+        if let Some(p) = h.cfg.borrow_mut().panel.get_mut(idx) {
+            set(p, v);
+        }
+    });
+    let h = handle.clone();
+    entry.connect_activate(move |_| h.apply());
+    row(label, &entry)
+}
+
+// The detail builders are passed the selected panel index implicitly via this
+// thread-local, set just before a detail is built. Simpler than threading the
+// index through header_slot_row's existing signature.
+thread_local! {
+    static CUR_PANEL: Cell<usize> = const { Cell::new(0) };
+}
+fn current_panel_index() -> usize {
+    CUR_PANEL.with(|c| c.get())
+}
+
+/// Header panel detail: clock formats, the four icon slots, and the power-menu
+/// command strings the `@menu` popover runs.
+fn header_detail(handle: &BarHandle, i: usize) -> GtkBox {
     // Seed default header buttons so the slots show what's currently on the bar.
     if handle.cfg.borrow().header.is_empty() {
         let lock = handle.cfg.borrow().actions.lock.clone();
@@ -1175,15 +1347,40 @@ fn commands_page(handle: &BarHandle) -> GtkBox {
     }
 
     let page = page_box();
-    page.append(&Label::new(Some(
-        "Header icons — a glyph + command per slot. '@menu' = power popover; blank = none.",
-    )));
+
+    // Clock formats (strftime). Stored on this panel's config.
+    let (tf, df) = {
+        let cfg = handle.cfg.borrow();
+        let p = &cfg.panel[i];
+        (p.time_format.clone(), p.date_format.clone())
+    };
+    page.append(&fmt_row(
+        handle,
+        "Time format",
+        "%I:%M %p",
+        tf.as_deref(),
+        |p, v| p.time_format = v,
+    ));
+    page.append(&fmt_row(
+        handle,
+        "Date format",
+        "%a %d %b",
+        df.as_deref(),
+        |p, v| p.date_format = v,
+    ));
+
+    let sep = Label::new(Some(
+        "Icons — a glyph + command per slot. '@menu' = power popover; blank = none.",
+    ));
+    sep.set_xalign(0.0);
+    sep.set_margin_top(10);
+    page.append(&sep);
     page.append(&header_slot_row(handle, HeaderSlot::TimeLeft, "time ◀"));
     page.append(&header_slot_row(handle, HeaderSlot::TimeRight, "time ▶"));
     page.append(&header_slot_row(handle, HeaderSlot::DateLeft, "date ◀"));
     page.append(&header_slot_row(handle, HeaderSlot::DateRight, "date ▶"));
 
-    let sep = Label::new(Some("Commands (the power menu's items + the volume mixer)"));
+    let sep = Label::new(Some("Power-menu commands (run by the @menu popover)"));
     sep.set_xalign(0.0);
     sep.set_margin_top(10);
     page.append(&sep);
@@ -1211,14 +1408,248 @@ fn commands_page(handle: &BarHandle) -> GtkBox {
         &handle.cfg.borrow().actions.shutdown,
         |a, v| a.shutdown = v,
     ));
+    page
+}
+
+/// Volume panel detail: the mixer launched on right-click, plus interval.
+fn vol_detail(handle: &BarHandle, i: usize) -> GtkBox {
+    let page = page_box();
+    page.append(&interval_row(handle, i));
     page.append(&command_row(
         handle,
-        "Volume mixer",
+        "Right-click mixer",
         &handle.cfg.borrow().actions.mixer,
         |a, v| a.mixer = v,
     ));
+    page
+}
 
-    page.append(&save_bar(handle));
+/// The per-panel update interval spinner (seconds).
+fn interval_row(handle: &BarHandle, i: usize) -> GtkBox {
+    let iv = SpinButton::with_range(0.1, 600.0, 0.5);
+    iv.set_digits(1);
+    iv.set_value(handle.cfg.borrow().panel[i].interval);
+    iv.set_tooltip_text(Some("Seconds between updates for this panel"));
+    let h = handle.clone();
+    iv.connect_value_changed(move |s| {
+        if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+            p.interval = s.value();
+        }
+        h.apply();
+    });
+    row("Update interval (s)", &iv)
+}
+
+/// The per-panel "show label row" toggle (the panel's "LABEL  value" header).
+fn show_label_check(handle: &BarHandle, i: usize) -> CheckButton {
+    let c = CheckButton::with_label("Show label row");
+    c.set_active(handle.cfg.borrow().panel[i].show_label);
+    c.set_tooltip_text(Some(
+        "Off: just the graphic, no label/value header (e.g. cores under cpu)",
+    ));
+    let h = handle.clone();
+    c.connect_toggled(move |c| {
+        if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+            p.show_label = c.is_active();
+        }
+        h.apply();
+    });
+    c
+}
+
+/// Generic detail for the metric panels: interval, label toggle, plus a graph
+/// toggle for the types that actually draw a history graph.
+fn generic_detail(handle: &BarHandle, i: usize, kind: &str) -> GtkBox {
+    let page = page_box();
+    page.append(&interval_row(handle, i));
+    if LABEL_TYPES.contains(&kind) {
+        page.append(&show_label_check(handle, i));
+    }
+    if GRAPH_TYPES.contains(&kind) {
+        let g = CheckButton::with_label("Show history graph");
+        g.set_active(handle.cfg.borrow().panel[i].graph);
+        let h = handle.clone();
+        g.connect_toggled(move |c| {
+            if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                p.graph = c.is_active();
+            }
+            h.apply();
+        });
+        page.append(&g);
+    }
+    page
+}
+
+// ---- Panels config tab (master list ▸ per-panel detail) --------------------
+
+/// Build the detail pane for the panel at index `i`. Rebuilt on each selection.
+fn panel_detail(handle: &BarHandle, i: usize) -> GtkBox {
+    CUR_PANEL.with(|c| c.set(i));
+    let kind = match handle.cfg.borrow().panel.get(i) {
+        Some(p) => p.kind.clone(),
+        None => return page_box(),
+    };
+    match kind.as_str() {
+        "header" => header_detail(handle, i),
+        "sensors" | "temp" => temp_detail(handle, i),
+        "weather" | "wx" => weather_detail(handle),
+        "mail" => mail_detail(handle),
+        "tray" => tray_detail(handle),
+        "vol" => vol_detail(handle, i),
+        // clock shares the header's format fields but has no icons.
+        "clock" => {
+            let page = page_box();
+            let (tf, df) = {
+                let cfg = handle.cfg.borrow();
+                let p = &cfg.panel[i];
+                (p.time_format.clone(), p.date_format.clone())
+            };
+            page.append(&fmt_row(handle, "Time format", "%I:%M %p", tf.as_deref(), |p, v| {
+                p.time_format = v
+            }));
+            page.append(&fmt_row(handle, "Date format", "%a %d %b", df.as_deref(), |p, v| {
+                p.date_format = v
+            }));
+            page
+        }
+        // Panels with nothing to configure beyond presence/order.
+        "win" => {
+            let page = page_box();
+            let l = Label::new(Some("The taskbar has no options — it lists open windows."));
+            l.set_wrap(true);
+            l.set_xalign(0.0);
+            page.append(&l);
+            page
+        }
+        // Everything else is a metric panel: interval (+ graph where relevant).
+        _ => generic_detail(handle, i, &kind),
+    }
+}
+
+/// Install (once) a tiny stylesheet for prefs-window chrome that the ambient
+/// GTK theme gets wrong — notably the master panel list, which Adwaita only
+/// shades in its `:backdrop` (unfocused) state, so it *blends* into the window
+/// exactly when focused. Pin a consistent background + separator either way.
+fn ensure_prefs_css() {
+    thread_local! { static DONE: Cell<bool> = const { Cell::new(false) }; }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_data(
+        ".panel-master, .panel-master:backdrop {\
+           background-color: rgba(255,255,255,0.045);\
+           border-right: 1px solid rgba(255,255,255,0.09); }\
+         .panel-idx { font-family: monospace; color: rgba(255,255,255,0.45); }\
+         .drag-handle { color: rgba(255,255,255,0.30); }",
+    );
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
+fn panels_config_page(handle: &BarHandle) -> GtkBox {
+    ensure_prefs_css();
+    let page = page_box();
+    page.append(&Label::new(Some(
+        "Pick a panel on the left to configure it. Add / remove / reorder panels in the Layout tab.",
+    )));
+
+    let split = GtkBox::new(Orientation::Horizontal, 12);
+    split.set_vexpand(true);
+
+    // Master: the list of enabled panels (selectable).
+    let master = ListBox::new();
+    master.set_selection_mode(gtk::SelectionMode::Single);
+    master.set_size_request(130, -1);
+    master.add_css_class("panel-master");
+    let master_scroll = gtk::ScrolledWindow::new();
+    master_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    master_scroll.set_child(Some(&master));
+
+    // Detail: rebuilt whenever the selection changes.
+    let detail_scroll = gtk::ScrolledWindow::new();
+    detail_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    detail_scroll.set_hexpand(true);
+    detail_scroll.set_vexpand(true);
+
+    split.append(&master_scroll);
+    split.append(&detail_scroll);
+    page.append(&split);
+
+    // (Re)fill the master list from the current panel config. Stored as a
+    // closure so the page's `map` handler can refresh it after Layout edits.
+    let fill = {
+        let handle = handle.clone();
+        let master = master.clone();
+        move || {
+            let prev = master.selected_row().map(|r| r.index());
+            while let Some(c) = master.first_child() {
+                master.remove(&c);
+            }
+            let kinds: Vec<String> = handle
+                .cfg
+                .borrow()
+                .panel
+                .iter()
+                .map(|p| p.kind.clone())
+                .collect();
+            for (i, kind) in kinds.iter().enumerate() {
+                // Number in its own right-aligned monospace column so single- vs
+                // double-digit indices don't shove the names out of alignment.
+                let rrow = GtkBox::new(Orientation::Horizontal, 8);
+                rrow.set_margin_top(4);
+                rrow.set_margin_bottom(4);
+                rrow.set_margin_start(6);
+                rrow.set_margin_end(6);
+                let num = Label::new(Some(&i.to_string()));
+                num.add_css_class("panel-idx");
+                num.set_width_chars(2);
+                num.set_xalign(1.0);
+                let name = Label::new(Some(kind));
+                name.set_xalign(0.0);
+                rrow.append(&num);
+                rrow.append(&name);
+                master.append(&rrow);
+            }
+            // Restore selection (clamped), else select the first row.
+            let n = kinds.len() as i32;
+            if n > 0 {
+                let want = prev.unwrap_or(0).min(n - 1);
+                if let Some(rrow) = master.row_at_index(want) {
+                    master.select_row(Some(&rrow));
+                }
+            }
+        }
+    };
+
+    // Selecting a row rebuilds the detail pane.
+    {
+        let handle = handle.clone();
+        let detail_scroll = detail_scroll.clone();
+        master.connect_row_selected(move |_, row| match row {
+            Some(r) => detail_scroll.set_child(Some(&panel_detail(&handle, r.index() as usize))),
+            None => detail_scroll.set_child(None::<&gtk::Widget>),
+        });
+    }
+
+    // Keep the master list in sync with Layout-tab edits: refill each time this
+    // page is shown (Notebook maps the visible page's child on tab switch).
+    {
+        let fill = fill.clone();
+        master.connect_map(move |_| fill());
+    }
+    fill();
+
+    // The split already claims the vertical space; don't let the save bar also
+    // vexpand (it would steal ~half the height from the master/detail split).
+    let sb = save_bar(handle);
+    sb.set_vexpand(false);
+    page.append(&sb);
     page
 }
 
@@ -1264,6 +1695,16 @@ fn save_config(handle: &BarHandle) -> std::io::Result<std::path::PathBuf> {
     let name = handle.cfg.borrow().theme.clone();
     let name = if name.is_empty() { "default".to_string() } else { name };
     if crate::theme::is_valid_name(&name) {
+        // If the active theme bundles panel colors, refresh that bundle from the
+        // live config so it doesn't go stale relative to edits made since the
+        // last "Save + panel colors". A plain theme (bundle = None) stays plain.
+        if handle.theme.borrow().sensors.is_some() {
+            let sensors = handle.cfg.borrow().temp.sensors.clone();
+            let header = handle.cfg.borrow().header.clone();
+            let mut t = handle.theme.borrow_mut();
+            t.sensors = Some(sensors);
+            t.header = Some(header);
+        }
         let _ = save_theme_file(&name, &handle.theme.borrow());
     }
     Ok(path)
