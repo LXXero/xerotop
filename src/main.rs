@@ -4,6 +4,7 @@
 
 mod bar;
 mod config;
+mod mail;
 mod metrics;
 mod panels;
 mod power;

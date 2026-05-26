@@ -147,6 +147,8 @@ window.xerotop {{ background-color: transparent; }}
 .value {{ color: {value}; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
 .meter-icon {{ color: {icon}; font-size: 20px; }}
 .weather-icon {{ color: {icon}; font-size: 28px; }}
+.mail-icon {{ color: #e6f0ff; font-size: 20px; }}
+.mail-unread {{ color: #ffbf4d; font-weight: bold; }}
 .graph {{ background-color: rgba(0,0,0,0.25); }}
 .bar-meter {{ background-color: transparent; }}
 .sub {{ font-size: {small}px; color: {muted}; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}

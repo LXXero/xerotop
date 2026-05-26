@@ -291,6 +291,28 @@ fn de_secs<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
     })
 }
 
+/// MAIL panel: maildir unread/total + a click action. Hidden if no maildir.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MailConfig {
+    /// Maildir root (contains new/ + cur/); empty → ~/.maildir. "~/" expands.
+    pub dir: String,
+    /// Shell command run on click (e.g. open mutt in a terminal).
+    pub command: String,
+    /// Seconds between recounts (the count runs off the UI thread).
+    pub interval_s: f64,
+}
+
+impl Default for MailConfig {
+    fn default() -> Self {
+        Self {
+            dir: String::new(),
+            command: "xterm -e mutt".into(),
+            interval_s: 5.0,
+        }
+    }
+}
+
 /// Font-size overrides (px). `None` = use the active theme's size for that tier.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -342,6 +364,8 @@ pub struct Config {
     pub temp: TempConfig,
     #[serde(default)]
     pub weather: WeatherConfig,
+    #[serde(default)]
+    pub mail: MailConfig,
     /// Header icon buttons (the 4 slots). Empty → default power-menu + lock.
     #[serde(default, rename = "header_button")]
     pub header: Vec<HeaderButton>,
@@ -365,6 +389,7 @@ impl Default for Config {
             tray: TrayConfig::default(),
             temp: TempConfig::default(),
             weather: WeatherConfig::default(),
+            mail: MailConfig::default(),
             header: Vec::new(),
             actions: Actions::default(),
             panel: default_panels(),

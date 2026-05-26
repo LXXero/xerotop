@@ -25,9 +25,9 @@ thread_local! {
     static WINDOW: RefCell<Option<Window>> = const { RefCell::new(None) };
 }
 
-const PANEL_TYPES: [&str; 18] = [
-    "header", "clock", "cpu", "cores", "mem", "gpu", "disk", "net", "temp", "weather", "uptime",
-    "kbd", "bat", "vol", "bri", "top", "win", "tray",
+const PANEL_TYPES: [&str; 19] = [
+    "header", "clock", "cpu", "cores", "mem", "gpu", "disk", "net", "temp", "weather", "mail",
+    "uptime", "kbd", "bat", "vol", "bri", "top", "win", "tray",
 ];
 
 /// Panel types that have a history graph (so the "graph" toggle is meaningful).

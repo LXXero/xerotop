@@ -75,6 +75,7 @@ impl BarHandle {
         panels::set_tray(cfg.tray.columns, cfg.tray.icon_size);
         panels::set_temp_config(cfg.temp.clone());
         panels::set_weather_config(cfg.weather.clone());
+        panels::set_mail_config(cfg.mail.clone());
         panels::set_header_buttons(cfg.header.clone());
 
         // Generate the whole stylesheet from the theme (colors + font); the bar

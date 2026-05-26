@@ -186,6 +186,7 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
         "uptime" => Some(uptime_panel(iv)),
         "kbd" | "leds" => Some(kbd_panel(iv)),
         "weather" | "wx" => Some(weather_panel()),
+        "mail" => Some(mail_panel()),
         "top" => Some(top_panel(iv)),
         "gpu" => Some(gpu_panel(iv, cfg.graph, smooth)),
         "disk" => Some(disk_panel(iv, cfg.graph, smooth)),
@@ -616,6 +617,111 @@ fn weather_host() -> WeatherHost {
         }
         cell.borrow().as_ref().unwrap().clone()
     })
+}
+
+// ---- mail -------------------------------------------------------------------
+
+thread_local! {
+    static MAIL_CFG: RefCell<crate::config::MailConfig> =
+        RefCell::new(crate::config::MailConfig::default());
+    static MAIL_HOST: RefCell<Option<MailHost>> = const { RefCell::new(None) };
+}
+
+/// Set the mail config. Call before (re)building panels.
+pub fn set_mail_config(c: crate::config::MailConfig) {
+    MAIL_CFG.with(|m| *m.borrow_mut() = c);
+}
+
+fn mail_req() -> crate::mail::MailReq {
+    MAIL_CFG.with(|m| {
+        let c = m.borrow();
+        crate::mail::MailReq {
+            dir: c.dir.clone(),
+            interval_s: c.interval_s,
+        }
+    })
+}
+
+type MailRenderFn = Rc<dyn Fn(&crate::mail::MailCount)>;
+
+#[derive(Clone)]
+struct MailHost {
+    req_tx: std::sync::mpsc::Sender<crate::mail::MailReq>,
+    latest: Rc<RefCell<crate::mail::MailCount>>,
+    render: Rc<RefCell<Option<MailRenderFn>>>,
+}
+
+/// The single mail-counting thread, spawned on first use.
+fn mail_host() -> MailHost {
+    MAIL_HOST.with(|cell| {
+        if cell.borrow().is_none() {
+            let (rx, req_tx) = crate::mail::spawn(mail_req());
+            let host = MailHost {
+                req_tx,
+                latest: Rc::new(RefCell::new(crate::mail::MailCount::default())),
+                render: Rc::new(RefCell::new(None)),
+            };
+            let (latest, render) = (host.latest.clone(), host.render.clone());
+            gtk::glib::spawn_future_local(async move {
+                while let Ok(m) = rx.recv().await {
+                    *latest.borrow_mut() = m.clone();
+                    let cb = render.borrow().clone();
+                    if let Some(cb) = cb {
+                        cb(&m);
+                    }
+                }
+            });
+            *cell.borrow_mut() = Some(host);
+        }
+        cell.borrow().as_ref().unwrap().clone()
+    })
+}
+
+/// MAIL: envelope + "unread/total" from a maildir; click runs the configured
+/// command (e.g. open mutt). The whole panel hides when there's no maildir.
+fn mail_panel() -> Panel {
+    let command = MAIL_CFG.with(|m| m.borrow().command.clone());
+    let root = panel_box();
+    let row = GtkBox::new(Orientation::Horizontal, 6);
+    let icon = Label::new(Some("\u{f0e0}")); // envelope
+    icon.add_css_class("mail-icon");
+    let count = Label::new(Some("--"));
+    count.add_css_class("value");
+    count.set_hexpand(true);
+    count.set_xalign(1.0);
+    row.append(&icon);
+    row.append(&count);
+    root.append(&row);
+
+    // Click anywhere on the row → run the command (detached).
+    let click = gtk::GestureClick::new();
+    click.connect_pressed(move |_, _, _, _| spawn(&command));
+    row.add_controller(click);
+
+    let host = mail_host();
+    let _ = host.req_tx.send(mail_req()); // push current config
+
+    let (count_c, root_c) = (count.clone(), root.clone());
+    let render: MailRenderFn = Rc::new(move |m: &crate::mail::MailCount| {
+        root_c.set_visible(m.present); // no maildir → hide the panel entirely
+        if m.present {
+            count_c.set_text(&format!("{}/{}", m.new, m.total));
+            // light the count yellow when there are unread messages
+            if m.new > 0 {
+                count_c.add_css_class("mail-unread");
+            } else {
+                count_c.remove_css_class("mail-unread");
+            }
+        }
+    });
+    render(&host.latest.borrow());
+    *host.render.borrow_mut() = Some(render);
+
+    Panel {
+        root: root.upcast(),
+        interval: 3600.0, // the mail thread drives updates
+        update: Box::new(|| {}),
+    }
 }
 
 /// Weather: a compact icon + temperature (full report on hover), from wttr.in.
