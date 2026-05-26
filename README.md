@@ -47,7 +47,8 @@ Working:
 - **BAT / VOL / BRI** as icon + rounded level bar + value, with **scroll/click
   control** (volume via ALSA, brightness via `brightnessctl`, right-click volume
   opens a configurable mixer)
-- **TOP** process list, **UPTIME**, **keyboard LEDs** (caps/num/scroll),
+- **TOP** process list (configurable count), **UPTIME** (optional 1/5/15-min
+  load averages), **keyboard LEDs** (caps/num/scroll),
   **WEATHER** (wttr.in, no API key — compact icon + temp, full report on hover)
 - **MAIL**: maildir unread/total (envelope + count, yellow when unread); counts
   off-thread, hides where there's no maildir, click runs a configured command
@@ -73,8 +74,8 @@ Working:
   `~/.config/xerotop/themes/<name>.toml`. Loading a theme that carries panel
   colors applies them, so a theme can capture a full look, not just the palette.
 
-Planned (see `TODO.md`): more configurable constants, load-average / MPRIS /
-network-info panels, occlusion-aware pausing, multiple bars, horizontal polish.
+Planned (see `TODO.md`): MPRIS now-playing / network-info panels,
+occlusion-aware pausing, multiple bars, horizontal polish.
 
 ## Build & run
 
