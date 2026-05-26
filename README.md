@@ -178,3 +178,7 @@ show_label = true                   # false = drop the "CPU" header row
 | `prefs.rs`   | live preferences GUI (General / Theme / Layout / Panels master-detail), mutates state + `apply()` |
 | `bar.rs`     | layer-shell window, `BarHandle::apply()` live re-render, right-click menu, scheduler |
 | `main.rs`    | app bootstrap, `--prefs` |
+
+## License
+
+[GPL-3.0-or-later](LICENSE) — © xero (github.com/LXXero).

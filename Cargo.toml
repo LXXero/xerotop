@@ -2,6 +2,9 @@
 name = "xerotop"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
+description = "A gkrellm-style, battery-conscious Wayland (wlroots/layer-shell) system monitor bar in Rust + GTK4."
+repository = "https://github.com/LXXero/xerotop"
 
 [dependencies]
 alsa = "0.11.0"
