@@ -96,9 +96,12 @@ impl Graph {
         area.set_content_height(h);
 
         // Keep a little more than the visible window so the line can enter from
-        // off-canvas smoothly instead of rescaling during warmup.
+        // off-canvas smoothly instead of rescaling during warmup. The upper
+        // clamp bounds memory at pathologically small intervals; at 2048 it
+        // honors the prefs' 600s window for any interval >= ~0.3s (panels run
+        // 1-5s), and a sub-0.3s + 600s combo just shows fewer seconds.
         let iv = interval_s.max(0.05);
-        let len = ((window / iv).ceil() as usize + 2).clamp(8, 512);
+        let len = ((window / iv).ceil() as usize + 2).clamp(8, 2048);
         let series: Vec<Series> = specs
             .iter()
             .map(|(rgba, fill)| Series {

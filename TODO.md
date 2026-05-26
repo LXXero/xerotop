@@ -7,9 +7,10 @@ what's *not* built yet.
 
 Hardcoded constants that should become config/theme knobs:
 
-- *(optional)* **EMA smoothing** for the `top` list — only worth it if the
-  ordering ever feels jittery (it doesn't at the default 3s interval, since the
-  CPU% is already a delta over the interval). ~10 lines + an `alpha` knob if so.
+- *(optional)* **Configurable `top` EMA alpha** — the `top` list is already
+  EMA-smoothed (`metrics.rs` `ALPHA = 0.3`, calm by design); exposing alpha as a
+  knob is the only open bit, and low value since it isn't jittery. Skip unless
+  asked.
 
 (Done: per-panel graph height, per-panel graph time window, global meter-bar
 thickness, top-list count, vol/bri scroll step.)
