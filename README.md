@@ -40,7 +40,7 @@ Working:
 - meter panels: **CPU**, **CORES** (per-core mini bars), **MEM**, **GPU**,
   **DISK** (usage bar + read/write graphs), **NET**. Each metric panel has a
   per-panel "show label" toggle, so e.g. `cores` can sit under `cpu` headerless.
-- **SENSORS** (`sensors`, formerly `temp`): fully configurable — pick any hwmon temp/fan from a list,
+- **SENSORS** (`sensors`, formerly `temp`): fully configurable — pick any hwmon temp/fan/voltage from a list,
   label/color/reorder each, plus an optional averaged row (bar + trend + value)
 - **BAT / VOL / BRI** as icon + rounded level bar + value, with **scroll/click
   control** (volume via ALSA, brightness via `brightnessctl`, right-click volume

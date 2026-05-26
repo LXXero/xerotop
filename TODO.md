@@ -15,10 +15,6 @@ Hardcoded constants that should become config/theme knobs:
 
 ## Panels / widgets to add
 
-- **Voltages in the `sensors` panel** — the panel was renamed from `temp` to
-  `sensors` because it already does temps + fans; extend `metrics::SensorKind`
-  and the hwmon scan to also expose `inN_input` (voltage) rails as selectable
-  rows.
 - **Now playing (MPRIS)** — current track/artist + play-pause over D-Bus (we
   already talk D-Bus for the tray).
 - **Network info** — IP address / wifi SSID alongside the net throughput graph.

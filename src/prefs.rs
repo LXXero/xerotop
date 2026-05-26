@@ -1010,6 +1010,7 @@ fn temp_detail(handle: &BarHandle, i: usize) -> GtkBox {
         let v = match s.kind {
             crate::metrics::SensorKind::Temp => format!("{:.0}°", s.value),
             crate::metrics::SensorKind::Fan => format!("{:.0}rpm", s.value),
+            crate::metrics::SensorKind::Voltage => format!("{:.2}V", s.value),
         };
         labels.push(match &s.label {
             Some(l) => format!("{}/{} {l} ({v})", s.chip, s.input),

@@ -1729,6 +1729,7 @@ pub const AVG_CHIP: &str = "@avg";
 enum RowKind {
     Temp,
     Fan,
+    Voltage,
     Avg, // averages the other temps; positioned anywhere in the list
 }
 
@@ -1844,6 +1845,8 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
                 RowKind::Avg
             } else if s.input.starts_with("fan") {
                 RowKind::Fan
+            } else if s.input.starts_with("in") {
+                RowKind::Voltage
             } else {
                 RowKind::Temp
             };
@@ -1905,25 +1908,17 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
             let val = Label::new(Some("--"));
             val.add_css_class("value");
             val.set_xalign(1.0);
-            val.set_width_chars(if kind == RowKind::Fan { 5 } else { 3 });
+            val.set_width_chars(match kind {
+                RowKind::Fan => 5,
+                RowKind::Voltage => 6, // "12.34V"
+                _ => 3,
+            });
 
-            // Fans get a level bar scaled to fan_max RPM (no trend graph); temps and
-            // the avg row get a 0..100 °C bar + trend graph.
-            let (bar, g) = if kind == RowKind::Fan {
-                let max = if fan_max > 0.0 { fan_max } else { FAN_MAX_RPM };
-                let bar = Bar::new(0, bar_h(), max, color);
-                bar.area.set_hexpand(true);
-                bar.area.set_valign(gtk::Align::Center);
-                row.append(&bar.area);
-                row.append(&val);
-                (Some(bar), None)
-            } else {
-                let bar = Bar::new(0, bar_h(), 100.0, color);
-                bar.area.set_hexpand(true);
-                bar.area.set_valign(gtk::Align::Center);
-                row.append(&bar.area);
-                row.append(&val);
-                let g = graph.then(|| {
+            // A trend graph for the non-fan rows (graph-capable). Voltages and
+            // temps move slowly, so a small range floor keeps a steady reading
+            // as a centered line rather than collapsing onto the baseline.
+            let trend = |row: &GtkBox, min_span: f64| -> Option<Graph> {
+                graph.then(|| {
                     let gh = GRAPH_H_OVERRIDE.with(|c| c.get()).unwrap_or(MINI_H);
                     let g = Graph::new(
                         30,
@@ -1933,14 +1928,41 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
                         &[(color, true)],
                         interval,
                         smooth,
-                        6.0, // °C floor so a steady sensor still shows a centered line
+                        min_span,
                     );
                     g.area.set_valign(gtk::Align::Center);
                     row.append(&g.area);
                     SMOOTH_GRAPHS.with(|v| v.borrow_mut().push(g.clone()));
                     g
-                });
-                (Some(bar), g)
+                })
+            };
+
+            // Fans: level bar scaled to fan_max RPM (no trend graph). Voltages:
+            // value + trend graph, no level bar (a 0..100 bar is meaningless for
+            // volts). Temps / the avg row: a 0..100 °C bar + trend graph.
+            let (bar, g) = match kind {
+                RowKind::Fan => {
+                    let max = if fan_max > 0.0 { fan_max } else { FAN_MAX_RPM };
+                    let bar = Bar::new(0, bar_h(), max, color);
+                    bar.area.set_hexpand(true);
+                    bar.area.set_valign(gtk::Align::Center);
+                    row.append(&bar.area);
+                    row.append(&val);
+                    (Some(bar), None)
+                }
+                RowKind::Voltage => {
+                    val.set_hexpand(true);
+                    row.append(&val);
+                    (None, trend(&row, 0.1)) // 0.1 V floor
+                }
+                _ => {
+                    let bar = Bar::new(0, bar_h(), 100.0, color);
+                    bar.area.set_hexpand(true);
+                    bar.area.set_valign(gtk::Align::Center);
+                    row.append(&bar.area);
+                    row.append(&val);
+                    (Some(bar), trend(&row, 6.0)) // 6 °C floor
+                }
             };
             root.append(&row);
             TempRow {
@@ -1974,11 +1996,13 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         for row in rows.iter().filter(|r| r.kind != RowKind::Avg) {
             match row.idx.and_then(|i| snap.get(i).copied().flatten()) {
                 Some(v) => {
-                    if row.kind == RowKind::Temp {
-                        row.val.set_text(&format!("{v:.0}\u{00b0}"));
-                        temps.push(v);
-                    } else {
-                        row.val.set_text(&format!("{v:.0}"));
+                    match row.kind {
+                        RowKind::Temp => {
+                            row.val.set_text(&format!("{v:.0}\u{00b0}"));
+                            temps.push(v);
+                        }
+                        RowKind::Voltage => row.val.set_text(&format!("{v:.2}V")),
+                        _ => row.val.set_text(&format!("{v:.0}")),
                     }
                     if let Some(b) = &row.bar {
                         b.set(v);

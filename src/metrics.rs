@@ -282,7 +282,7 @@ fn read_resolved(r: &Resolved) -> Option<f64> {
         Resolved::File(path, kind) => {
             let v: f64 = fs::read_to_string(path).ok()?.trim().parse().ok()?;
             Some(match kind {
-                SensorKind::Temp => v / 1000.0,
+                SensorKind::Temp | SensorKind::Voltage => v / 1000.0,
                 SensorKind::Fan => v,
             })
         }
@@ -324,6 +324,7 @@ pub fn spawn_temps(
 pub enum SensorKind {
     Temp,
     Fan,
+    Voltage,
 }
 
 /// A discovered hwmon sensor (temperature or fan).
@@ -338,6 +339,8 @@ pub struct SensorInfo {
 fn input_kind(input: &str) -> SensorKind {
     if input.starts_with("fan") {
         SensorKind::Fan
+    } else if input.starts_with("in") {
+        SensorKind::Voltage // hwmon `inN_input`, in millivolts
     } else {
         SensorKind::Temp
     }
@@ -350,7 +353,7 @@ fn read_input(dir: &Path, input: &str) -> Option<f64> {
         .parse()
         .ok()?;
     Some(match input_kind(input) {
-        SensorKind::Temp => v / 1000.0,
+        SensorKind::Temp | SensorKind::Voltage => v / 1000.0, // m°C / mV → °C / V
         SensorKind::Fan => v,
     })
 }
@@ -381,7 +384,10 @@ pub fn list_sensors() -> Vec<SensorInfo> {
         let mut inputs: Vec<String> = rd
             .flatten()
             .filter_map(|e| e.file_name().into_string().ok())
-            .filter(|n| (n.starts_with("temp") || n.starts_with("fan")) && n.ends_with("_input"))
+            .filter(|n| {
+                (n.starts_with("temp") || n.starts_with("fan") || n.starts_with("in"))
+                    && n.ends_with("_input")
+            })
             .map(|n| n.trim_end_matches("_input").to_string())
             .collect();
         inputs.sort();
