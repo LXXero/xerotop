@@ -7,7 +7,7 @@ use crate::bar::BarHandle;
 use crate::config::{
     Align, BarLength, Edge, HeaderButton, HeaderSlot, Layer, PanelConfig, TempSensor,
 };
-use crate::theme::{themes_dir, Theme};
+use crate::theme::{Theme, themes_dir};
 use gtk::gdk::RGBA;
 use gtk::glib;
 use gtk::pango::FontDescription;
@@ -976,15 +976,32 @@ fn default_temp_sensors() -> Vec<TempSensor> {
         .collect()
 }
 
-fn temp_detail(handle: &BarHandle, i: usize) -> GtkBox {
-    // Nothing configured yet = auto-detect. Make those defaults visible/editable
-    // by seeding the list with them, so adding a sensor appends instead of
-    // silently replacing the whole auto set. (Reproduces the same sensors, so
-    // the bar looks identical; only persisted if the user hits Save.)
+/// Rows to display in the Sensors editor: the explicit config list, or the
+/// auto-detected defaults as a *view model* when nothing's configured. The
+/// defaults are NOT written to config here — so merely opening the tab (and
+/// later saving for some unrelated reason) won't pin this machine's hwmon names.
+fn effective_sensors(handle: &BarHandle) -> Vec<TempSensor> {
+    let cfg = handle.cfg.borrow();
+    if cfg.temp.sensors.is_empty() {
+        default_temp_sensors()
+    } else {
+        cfg.temp.sensors.clone()
+    }
+}
+
+/// Commit the displayed defaults into config the first time the user actually
+/// edits a sensor, so the rows become real, indexable config entries (and the
+/// indices line up with what's on screen). No-op once a list exists.
+fn materialize_sensors(handle: &BarHandle) {
     if handle.cfg.borrow().temp.sensors.is_empty() {
         handle.cfg.borrow_mut().temp.sensors = default_temp_sensors();
     }
+}
 
+fn temp_detail(handle: &BarHandle, i: usize) -> GtkBox {
+    // When nothing's configured we show the auto-detected defaults as a view
+    // model (see effective_sensors) without writing them to config; they only
+    // get committed once the user actually edits a row (materialize_sensors).
     let page = page_box();
     page.append(&interval_row(handle, i));
     page.append(&show_label_check(handle, i));
@@ -1044,6 +1061,7 @@ fn temp_detail(handle: &BarHandle, i: usize) -> GtkBox {
         let Some((chip, input, label)) = ids.get(kinds.selected() as usize) else {
             return;
         };
+        materialize_sensors(&h); // append to the auto defaults, don't replace them
         let n = h.cfg.borrow().temp.sensors.len();
         h.cfg.borrow_mut().temp.sensors.push(TempSensor {
             chip: chip.clone(),
@@ -1075,7 +1093,7 @@ fn populate_temp_list(handle: &BarHandle, list: &ListBox) {
     while let Some(c) = list.first_child() {
         list.remove(&c);
     }
-    let n = handle.cfg.borrow().temp.sensors.len();
+    let n = effective_sensors(handle).len();
     for i in 0..n {
         list.append(&temp_sensor_row(handle, list, i, n));
     }
@@ -1083,8 +1101,8 @@ fn populate_temp_list(handle: &BarHandle, list: &ListBox) {
 
 fn temp_sensor_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> GtkBox {
     let (chip, input, label, color, fan_max) = {
-        let cfg = handle.cfg.borrow();
-        let s = &cfg.temp.sensors[i];
+        let sensors = effective_sensors(handle);
+        let s = &sensors[i];
         (
             s.chip.clone(),
             s.input.clone(),
@@ -1115,12 +1133,13 @@ fn temp_sensor_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> Gt
     label_entry.set_tooltip_text(Some("Press Enter to apply"));
     let h = handle.clone();
     label_entry.connect_changed(move |e| {
+        materialize_sensors(&h);
         h.cfg.borrow_mut().temp.sensors[i].label = e.text().to_string();
     });
     let h = handle.clone();
     label_entry.connect_activate(move |_| h.apply()); // Enter applies
-                                                      // Also apply on focus-out, so clicking away (not just Enter) re-renders the
-                                                      // bar — matches the instant-apply color picker next to it.
+    // Also apply on focus-out, so clicking away (not just Enter) re-renders the
+    // bar — matches the instant-apply color picker next to it.
     let h = handle.clone();
     let focus = gtk::EventControllerFocus::new();
     focus.connect_leave(move |_| h.apply());
@@ -1136,6 +1155,7 @@ fn temp_sensor_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> Gt
     color_btn.set_rgba(&hex_to_rgba(init));
     let h = handle.clone();
     color_btn.connect_rgba_notify(move |b| {
+        materialize_sensors(&h);
         h.cfg.borrow_mut().temp.sensors[i].color = rgba_to_hex(&b.rgba());
         h.apply();
     });
@@ -1148,6 +1168,7 @@ fn temp_sensor_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> Gt
         max.set_tooltip_text(Some("Fan RPM mapped to a full bar"));
         let h = handle.clone();
         max.connect_value_changed(move |s| {
+            materialize_sensors(&h);
             h.cfg.borrow_mut().temp.sensors[i].fan_max = s.value();
             h.apply();
         });
@@ -1163,6 +1184,7 @@ fn temp_sensor_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> Gt
     let h = handle.clone();
     let list_c = list.clone();
     up.connect_clicked(move |_| {
+        materialize_sensors(&h);
         h.cfg.borrow_mut().temp.sensors.swap(i, i - 1);
         h.apply();
         populate_temp_list(&h, &list_c);
@@ -1174,6 +1196,7 @@ fn temp_sensor_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> Gt
     let h = handle.clone();
     let list_c = list.clone();
     down.connect_clicked(move |_| {
+        materialize_sensors(&h);
         h.cfg.borrow_mut().temp.sensors.swap(i, i + 1);
         h.apply();
         populate_temp_list(&h, &list_c);
@@ -1184,6 +1207,7 @@ fn temp_sensor_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> Gt
     let h = handle.clone();
     let list_c = list.clone();
     del.connect_clicked(move |_| {
+        materialize_sensors(&h);
         h.cfg.borrow_mut().temp.sensors.remove(i);
         h.apply();
         populate_temp_list(&h, &list_c);
@@ -1896,7 +1920,10 @@ fn save_config(handle: &BarHandle) -> std::io::Result<std::path::PathBuf> {
             t.sensors = Some(sensors);
             t.header = Some(header);
         }
-        let _ = save_theme_file(&name, &handle.theme.borrow());
+        // Propagate a theme-write failure: theme edits (colors/fonts) live only
+        // in the theme file, so swallowing this would let the UI say "Saved"
+        // while those edits are silently lost.
+        save_theme_file(&name, &handle.theme.borrow())?;
     }
     Ok(path)
 }

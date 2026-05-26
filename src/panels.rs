@@ -179,6 +179,38 @@ pub fn reset_smooth_registry() {
     SMOOTH_GRAPHS.with(|v| v.borrow_mut().clear());
 }
 
+/// Clear every panel host's render-callback list. Call at the start of a
+/// rebuild: removed host-backed panels (weather/mail/tray/tasks/sensors) then
+/// stop being updated (and stop pinning their detached widgets alive), and the
+/// surviving panels re-register their callbacks as they're rebuilt.
+pub fn reset_panel_hosts() {
+    WEATHER_HOST.with(|c| {
+        if let Some(h) = c.borrow().as_ref() {
+            h.render.borrow_mut().clear();
+        }
+    });
+    MAIL_HOST.with(|c| {
+        if let Some(h) = c.borrow().as_ref() {
+            h.render.borrow_mut().clear();
+        }
+    });
+    TRAY_HOST.with(|c| {
+        if let Some(h) = c.borrow().as_ref() {
+            h.render.borrow_mut().clear();
+        }
+    });
+    TASKBAR_HOST.with(|c| {
+        if let Some(h) = c.borrow().as_ref() {
+            h.render.borrow_mut().clear();
+        }
+    });
+    TEMP_HOST.with(|c| {
+        if let Some(h) = c.borrow().as_ref() {
+            h.render.borrow_mut().clear();
+        }
+    });
+}
+
 /// Set the level-meter bar thickness (px). Call before (re)building panels.
 pub fn set_meter_thickness(px: i32) {
     METER_H.with(|c| c.set(px.max(2)));
@@ -273,47 +305,47 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
         "volume" => {
             let step = cfg.scroll_step.unwrap_or(2.0).max(0.5);
             Some(bar_panel(
-            iv,
-            pal().green,
-            || match volume() {
-                Some((p, muted)) => {
-                    let glyph = if muted || p <= 0.0 {
-                        "\u{f026}" // muted
-                    } else if p < 50.0 {
-                        "\u{f027}" // low
-                    } else {
-                        "\u{f028}" // high
-                    };
-                    let icon = if muted {
-                        format!("<span foreground='#ff6666'>{glyph}</span>")
-                    } else {
-                        glyph.to_string()
-                    };
-                    (icon, format!("{p:.0}%"), p)
-                }
-                None => ("\u{f028}".to_string(), "--".to_string(), 0.0),
-            },
-            Some(Box::new(move |d| add_volume(d * step))),
-            Some(Box::new(toggle_mute)),
-            {
-                let mixer = actions.mixer.clone();
-                Some(Box::new(move || spawn(&mixer)))
-            },
-        ))
+                iv,
+                pal().green,
+                || match volume() {
+                    Some((p, muted)) => {
+                        let glyph = if muted || p <= 0.0 {
+                            "\u{f026}" // muted
+                        } else if p < 50.0 {
+                            "\u{f027}" // low
+                        } else {
+                            "\u{f028}" // high
+                        };
+                        let icon = if muted {
+                            format!("<span foreground='#ff6666'>{glyph}</span>")
+                        } else {
+                            glyph.to_string()
+                        };
+                        (icon, format!("{p:.0}%"), p)
+                    }
+                    None => ("\u{f028}".to_string(), "--".to_string(), 0.0),
+                },
+                Some(Box::new(move |d| add_volume(d * step))),
+                Some(Box::new(toggle_mute)),
+                {
+                    let mixer = actions.mixer.clone();
+                    Some(Box::new(move || spawn(&mixer)))
+                },
+            ))
         }
         "brightness" => {
             let step = cfg.scroll_step.unwrap_or(5.0).max(0.5);
             Some(bar_panel(
-            iv,
-            pal().amber,
-            || match brightness() {
-                Some(p) => ("\u{f185}".to_string(), format!("{p:.0}%"), p), // sun
-                None => ("\u{f185}".to_string(), "--".to_string(), 0.0),
-            },
-            Some(Box::new(move |d| add_brightness(d * step))),
-            None,
-            None,
-        ))
+                iv,
+                pal().amber,
+                || match brightness() {
+                    Some(p) => ("\u{f185}".to_string(), format!("{p:.0}%"), p), // sun
+                    None => ("\u{f185}".to_string(), "--".to_string(), 0.0),
+                },
+                Some(Box::new(move |d| add_brightness(d * step))),
+                None,
+                None,
+            ))
         }
         other => {
             eprintln!("xerotop: unknown panel type '{other}', skipping");
@@ -694,7 +726,10 @@ type WeatherRenderFn = Rc<dyn Fn(&crate::weather::Weather)>;
 struct WeatherHost {
     req_tx: std::sync::mpsc::Sender<crate::weather::WeatherReq>,
     latest: Rc<RefCell<crate::weather::Weather>>,
-    render: Rc<RefCell<Option<WeatherRenderFn>>>,
+    // One callback per live panel of this type. Cleared on every rebuild (see
+    // reset_panel_hosts) so removed panels stop being updated and duplicates
+    // each get their own; an empty list just means no panel of this type.
+    render: Rc<RefCell<Vec<WeatherRenderFn>>>,
 }
 
 /// The single weather fetch thread, spawned on first use.
@@ -705,14 +740,13 @@ fn weather_host() -> WeatherHost {
             let host = WeatherHost {
                 req_tx,
                 latest: Rc::new(RefCell::new(crate::weather::Weather::default())),
-                render: Rc::new(RefCell::new(None)),
+                render: Rc::new(RefCell::new(Vec::new())),
             };
             let (latest, render) = (host.latest.clone(), host.render.clone());
             gtk::glib::spawn_future_local(async move {
                 while let Ok(w) = rx.recv().await {
                     *latest.borrow_mut() = w.clone();
-                    let cb = render.borrow().clone();
-                    if let Some(cb) = cb {
+                    for cb in render.borrow().iter() {
                         cb(&w);
                     }
                 }
@@ -752,7 +786,7 @@ type MailRenderFn = Rc<dyn Fn(&crate::mail::MailCount)>;
 struct MailHost {
     req_tx: std::sync::mpsc::Sender<crate::mail::MailReq>,
     latest: Rc<RefCell<crate::mail::MailCount>>,
-    render: Rc<RefCell<Option<MailRenderFn>>>,
+    render: Rc<RefCell<Vec<MailRenderFn>>>,
 }
 
 /// The single mail-counting thread, spawned on first use.
@@ -763,14 +797,13 @@ fn mail_host() -> MailHost {
             let host = MailHost {
                 req_tx,
                 latest: Rc::new(RefCell::new(crate::mail::MailCount::default())),
-                render: Rc::new(RefCell::new(None)),
+                render: Rc::new(RefCell::new(Vec::new())),
             };
             let (latest, render) = (host.latest.clone(), host.render.clone());
             gtk::glib::spawn_future_local(async move {
                 while let Ok(m) = rx.recv().await {
                     *latest.borrow_mut() = m.clone();
-                    let cb = render.borrow().clone();
-                    if let Some(cb) = cb {
+                    for cb in render.borrow().iter() {
                         cb(&m);
                     }
                 }
@@ -819,7 +852,7 @@ fn mail_panel() -> Panel {
         }
     });
     render(&host.latest.borrow());
-    *host.render.borrow_mut() = Some(render);
+    host.render.borrow_mut().push(render);
 
     Panel {
         root: root.upcast(),
@@ -914,7 +947,7 @@ fn weather_panel() -> Panel {
         }
     });
     render(&host.latest.borrow());
-    *host.render.borrow_mut() = Some(render);
+    host.render.borrow_mut().push(render);
 
     Panel {
         root: root.upcast(),
@@ -1414,7 +1447,7 @@ fn make_menu_popover(
 
 type TrayItems = Vec<crate::tray::TrayItem>;
 type TrayRenderFn = Rc<dyn Fn(&[crate::tray::TrayItem])>;
-type TrayRender = Rc<RefCell<Option<TrayRenderFn>>>;
+type TrayRender = Rc<RefCell<Vec<TrayRenderFn>>>;
 /// Rebuild closure for the currently-open tray menu, if any (refreshed on each
 /// snapshot so a lazily-populated menu fills in after AboutToShow).
 type OpenMenu = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
@@ -1440,7 +1473,7 @@ fn tray_host() -> TrayHost {
             let host = TrayHost {
                 atx: Rc::new(atx),
                 latest: Rc::new(RefCell::new(Vec::new())),
-                render: Rc::new(RefCell::new(None)),
+                render: Rc::new(RefCell::new(Vec::new())),
                 store: Rc::new(RefCell::new(HashMap::new())),
                 open: Rc::new(RefCell::new(None)),
             };
@@ -1458,8 +1491,7 @@ fn tray_host() -> TrayHost {
                         .map(|it| (it.id.clone(), it.menu.clone()))
                         .collect();
                     *latest.borrow_mut() = items.clone();
-                    let cb = render.borrow().clone();
-                    if let Some(cb) = cb {
+                    for cb in render.borrow().iter() {
                         cb(&items);
                     }
                     // Refresh an open menu if its layout changed (no-op otherwise).
@@ -1590,7 +1622,7 @@ fn tray_panel() -> Panel {
         }
     });
     render(&host.latest.borrow());
-    *host.render.borrow_mut() = Some(render);
+    host.render.borrow_mut().push(render);
 
     Panel {
         root: root.upcast(),
@@ -1601,7 +1633,7 @@ fn tray_panel() -> Panel {
 
 type Toplevels = Vec<crate::taskbar::Toplevel>;
 type TaskbarRenderFn = Rc<dyn Fn(&[crate::taskbar::Toplevel])>;
-type TaskbarRender = Rc<RefCell<Option<TaskbarRenderFn>>>;
+type TaskbarRender = Rc<RefCell<Vec<TaskbarRenderFn>>>;
 
 #[derive(Clone)]
 struct TaskbarHost {
@@ -1622,14 +1654,13 @@ fn taskbar_host() -> TaskbarHost {
             let host = TaskbarHost {
                 atx: Rc::new(atx),
                 latest: Rc::new(RefCell::new(Vec::new())),
-                render: Rc::new(RefCell::new(None)),
+                render: Rc::new(RefCell::new(Vec::new())),
             };
             let (latest, render) = (host.latest.clone(), host.render.clone());
             gtk::glib::spawn_future_local(async move {
                 while let Ok(tops) = rx.recv().await {
                     *latest.borrow_mut() = tops.clone();
-                    let cb = render.borrow().clone();
-                    if let Some(cb) = cb {
+                    for cb in render.borrow().iter() {
                         cb(&tops);
                     }
                 }
@@ -1709,7 +1740,7 @@ fn taskbar_panel() -> Panel {
         }
     });
     render(&host.latest.borrow());
-    *host.render.borrow_mut() = Some(render);
+    host.render.borrow_mut().push(render);
 
     Panel {
         root: root.upcast(),
@@ -1772,7 +1803,7 @@ thread_local! {
 struct TempHost {
     req_tx: std::sync::mpsc::Sender<TempReq>,
     latest: Rc<RefCell<TempSnapshot>>,
-    render: Rc<RefCell<Option<TempRenderFn>>>,
+    render: Rc<RefCell<Vec<TempRenderFn>>>,
 }
 
 /// The single hwmon sampler thread, spawned on first use. Slow sensor reads
@@ -1784,14 +1815,13 @@ fn temp_host(initial: TempReq) -> TempHost {
             let host = TempHost {
                 req_tx,
                 latest: Rc::new(RefCell::new(Vec::new())),
-                render: Rc::new(RefCell::new(None)),
+                render: Rc::new(RefCell::new(Vec::new())),
             };
             let (latest, render) = (host.latest.clone(), host.render.clone());
             gtk::glib::spawn_future_local(async move {
                 while let Ok(snap) = rx.recv().await {
                     *latest.borrow_mut() = snap.clone();
-                    let cb = render.borrow().clone();
-                    if let Some(cb) = cb {
+                    for cb in render.borrow().iter() {
                         cb(&snap);
                     }
                 }
@@ -2052,7 +2082,7 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         }
     });
     render(&host.latest.borrow());
-    *host.render.borrow_mut() = Some(render);
+    host.render.borrow_mut().push(render);
 
     Panel {
         root: root.upcast(),
@@ -2267,9 +2297,12 @@ fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Act
         buttons
     };
     let slot_btn = |slot: HeaderSlot| {
+        // Keep any slot that has an icon OR a command — a blank icon is fine
+        // (header_button falls back to a command-appropriate glyph), matching
+        // what the prefs UI stores/previews. Only a fully-empty entry is skipped.
         buttons
             .iter()
-            .find(|b| b.slot == slot && !b.icon.is_empty())
+            .find(|b| b.slot == slot && (!b.icon.is_empty() || !b.command.is_empty()))
             .map(|b| header_button(&b.icon, &b.command, &b.color, actions))
     };
 

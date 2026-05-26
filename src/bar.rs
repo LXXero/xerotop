@@ -8,7 +8,7 @@ use crate::panels::{self, Panel};
 use crate::power;
 use crate::theme::Theme;
 use gtk::prelude::*;
-use gtk::{glib, Application, ApplicationWindow, Box as GtkBox, Orientation};
+use gtk::{Application, ApplicationWindow, Box as GtkBox, Orientation, glib};
 use gtk4_layer_shell::{Edge as LsEdge, Layer as LsLayer, LayerShell};
 
 fn ls_layer(l: Layer) -> LsLayer {
@@ -113,11 +113,7 @@ impl BarHandle {
         // stretch) because the window is non-resizable — see build().
         let full_len = monitor.as_ref().map(|m| {
             let g = m.geometry();
-            if horizontal {
-                g.width()
-            } else {
-                g.height()
-            }
+            if horizontal { g.width() } else { g.height() }
         });
         let (length_px, anchor_start, anchor_end) = match cfg.bar.length {
             Length::Full => (full_len.filter(|&v| v > 0).unwrap_or(-1), true, true),
@@ -182,6 +178,7 @@ impl BarHandle {
         let (smooth_ac, smooth_bat) = (cfg.bar.smooth, cfg.bar.smooth_battery);
         let smooth = if on_battery { smooth_bat } else { smooth_ac };
         panels::reset_smooth_registry(); // old graphs are about to be dropped
+        panels::reset_panel_hosts(); // and old host callbacks must stop firing
         let mut panels: Vec<Panel> = Vec::new();
         for pcfg in cfg.panel.iter() {
             if let Some(panel) = panels::build(pcfg, smooth, &cfg.actions) {
@@ -237,8 +234,8 @@ pub fn build(app: &Application, cfg: Config) -> BarHandle {
     window.init_layer_shell();
     window.set_namespace(Some("xerotop"));
     window.add_css_class("xerotop"); // scopes the transparent-window rule to us
-                                     // Size to exactly our request every time. A resizable window remembers the
-                                     // largest size it ever had, so reducing thickness wouldn't shrink it back.
+    // Size to exactly our request every time. A resizable window remembers the
+    // largest size it ever had, so reducing thickness wouldn't shrink it back.
     window.set_resizable(false);
 
     let theme_css = gtk::CssProvider::new();

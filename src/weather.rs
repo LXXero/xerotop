@@ -10,9 +10,9 @@ pub struct Weather {
     pub icon: String,       // Nerd Font weather glyph
     pub icon_color: String, // hex accent for the glyph (sun=yellow, etc.)
     pub temp: String,       // e.g. "+72°F"
-    pub cond: String,     // e.g. "Partly cloudy"
-    pub humidity: String, // e.g. "45%"
-    pub report: String,   // multi-line detail for the tooltip
+    pub cond: String,       // e.g. "Partly cloudy"
+    pub humidity: String,   // e.g. "45%"
+    pub report: String,     // multi-line detail for the tooltip
     pub ok: bool,
 }
 
@@ -53,7 +53,11 @@ fn color_for(cond: &str) -> &'static str {
     let c = cond.to_lowercase();
     if c.contains("thunder") || c.contains("storm") {
         "#bb9af7" // violet
-    } else if c.contains("snow") || c.contains("sleet") || c.contains("blizzard") || c.contains("ice") {
+    } else if c.contains("snow")
+        || c.contains("sleet")
+        || c.contains("blizzard")
+        || c.contains("ice")
+    {
         "#e6f0ff" // near-white
     } else if c.contains("rain") || c.contains("drizzle") || c.contains("shower") {
         "#66ccff" // blue

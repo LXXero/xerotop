@@ -8,8 +8,8 @@ use std::time::Duration;
 
 #[derive(Clone, Default)]
 pub struct MailCount {
-    pub new: usize,   // unread (Maildir new/)
-    pub total: usize, // new + cur
+    pub new: usize,    // unread (Maildir new/)
+    pub total: usize,  // new + cur
     pub present: bool, // false → no maildir on this host (panel hides)
 }
 
