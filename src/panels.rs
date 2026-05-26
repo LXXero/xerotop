@@ -568,7 +568,7 @@ fn uptime_panel(interval: f64, show_load: bool) -> Panel {
     // Clock glyph in the shared icon column (matching bat/vol/bri/kbd/weather),
     // value right-aligned — instead of a "UP" text label.
     let row = GtkBox::new(Orientation::Horizontal, 4);
-    let icon = Label::new(Some("\u{f252}")); //  hourglass (uptime — clock's in the header)
+    let icon = Label::new(Some("\u{f250}")); //  hourglass outline (uptime — clock's in the header)
     icon.add_css_class("meter-icon");
     icon.add_css_class("uptime-icon"); // trim its larger em to match the column
     icon.set_size_request(ICON_W, -1);
