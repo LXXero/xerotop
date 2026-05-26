@@ -30,7 +30,7 @@ const PANEL_TYPES: [&str; 19] = [
     "clock",
     "cpu",
     "cores",
-    "mem",
+    "memory",
     "gpu",
     "disk",
     "net",
@@ -48,11 +48,11 @@ const PANEL_TYPES: [&str; 19] = [
 ];
 
 /// Panel types that have a history graph (so the "graph" toggle is meaningful).
-const GRAPH_TYPES: [&str; 6] = ["cpu", "mem", "gpu", "disk", "net", "sensors"];
+const GRAPH_TYPES: [&str; 6] = ["cpu", "memory", "gpu", "disk", "net", "sensors"];
 
 /// Panel types whose label/value header row can be hidden (they build it via
 /// the shared `header()` helper, which honors the `show_label` flag).
-const LABEL_TYPES: [&str; 6] = ["cpu", "mem", "gpu", "disk", "net", "cores"];
+const LABEL_TYPES: [&str; 6] = ["cpu", "memory", "gpu", "disk", "net", "cores"];
 
 /// Open (or re-focus) the preferences window for the given bar.
 pub fn open(handle: &BarHandle) {

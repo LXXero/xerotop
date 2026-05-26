@@ -352,7 +352,7 @@ fn default_panels() -> Vec<PanelConfig> {
     [
         "header",
         "cpu",
-        "mem",
+        "memory",
         "gpu",
         "disk",
         "net",
@@ -371,7 +371,7 @@ fn default_panels() -> Vec<PanelConfig> {
         // it samples less often; everything else stays responsive.
         interval: match *k {
             "sensors" => 5.0,
-            "cpu" | "mem" | "gpu" | "disk" | "top" => 2.0,
+            "cpu" | "memory" | "gpu" | "disk" | "top" => 2.0,
             "battery" => 10.0,
             _ => 1.0,
         },
@@ -514,7 +514,7 @@ interval = 2
 graph = true
 
 [[panel]]
-type = "mem"
+type = "memory"
 interval = 2
 graph = true
 
@@ -584,7 +584,7 @@ mod tests {
         assert_eq!(iv("cpu"), Some(2.0));
         assert_eq!(iv("battery"), Some(10.0));
         assert_eq!(iv("top"), Some(3.0));
-        assert_eq!(iv("mem"), Some(2.0));
+        assert_eq!(iv("memory"), Some(2.0));
         assert_eq!(iv("net"), Some(1.0));
     }
 

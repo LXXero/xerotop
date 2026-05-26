@@ -231,7 +231,7 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
                 }
             },
         )),
-        "mem" => Some(mem_panel(iv, cfg.graph, smooth)),
+        "memory" => Some(mem_panel(iv, cfg.graph, smooth)),
         "sensors" => Some(temp_panel(iv, cfg.graph, smooth)),
         "cores" => Some(cores_panel(iv)),
         "uptime" => Some(uptime_panel(iv, cfg.show_load)),
