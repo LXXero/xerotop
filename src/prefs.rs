@@ -397,6 +397,7 @@ fn tray_detail(handle: &BarHandle) -> GtkBox {
     let cfg = handle.cfg.borrow();
 
     let tray_cols = SpinButton::with_range(1.0, 32.0, 1.0);
+    tray_cols.set_width_chars(5);
     tray_cols.set_value(cfg.tray.columns as f64);
     let h = handle.clone();
     tray_cols.connect_value_changed(move |s| {
@@ -406,6 +407,7 @@ fn tray_detail(handle: &BarHandle) -> GtkBox {
     page.append(&row("Icons per row", &tray_cols));
 
     let tray_size = SpinButton::with_range(8.0, 64.0, 1.0);
+    tray_size.set_width_chars(5);
     tray_size.set_value(cfg.tray.icon_size as f64);
     let h = handle.clone();
     tray_size.connect_value_changed(move |s| {
@@ -1565,6 +1567,7 @@ fn vol_detail(handle: &BarHandle, i: usize) -> GtkBox {
 fn scroll_step_row(handle: &BarHandle, i: usize, default: f64) -> GtkBox {
     let sp = SpinButton::with_range(0.5, 50.0, 0.5);
     sp.set_digits(1);
+    sp.set_width_chars(5); // uniform with the other detail spinners so they align
     sp.set_value(handle.cfg.borrow().panel[i].scroll_step.unwrap_or(default));
     sp.set_tooltip_text(Some("Percent change per scroll-wheel notch"));
     let h = handle.clone();
@@ -1581,6 +1584,7 @@ fn scroll_step_row(handle: &BarHandle, i: usize, default: f64) -> GtkBox {
 fn interval_row(handle: &BarHandle, i: usize) -> GtkBox {
     let iv = SpinButton::with_range(0.1, 600.0, 0.5);
     iv.set_digits(1);
+    iv.set_width_chars(5);
     iv.set_value(handle.cfg.borrow().panel[i].interval);
     iv.set_tooltip_text(Some("Seconds between updates for this panel"));
     let h = handle.clone();
@@ -1615,6 +1619,7 @@ fn show_label_check(handle: &BarHandle, i: usize) -> CheckButton {
 /// the graph canvas), but that only happens on this explicit edit.
 fn graph_height_row(handle: &BarHandle, i: usize, default_h: i32) -> GtkBox {
     let sp = SpinButton::with_range(6.0, 200.0, 1.0);
+    sp.set_width_chars(5);
     let init = handle.cfg.borrow().panel[i]
         .graph_height
         .unwrap_or(default_h);
@@ -1704,6 +1709,7 @@ fn panel_detail(handle: &BarHandle, i: usize) -> GtkBox {
             let page = page_box();
             page.append(&interval_row(handle, i));
             let n = SpinButton::with_range(1.0, 20.0, 1.0);
+            n.set_width_chars(5);
             n.set_value(handle.cfg.borrow().panel[i].count.unwrap_or(5) as f64);
             let h = handle.clone();
             n.connect_value_changed(move |s| {
