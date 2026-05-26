@@ -67,20 +67,13 @@ fn target_monitor(cfg: &Config) -> Option<gtk::gdk::Monitor> {
 impl BarHandle {
     /// Re-render the entire bar from the current config: styling, geometry,
     /// orientation, panels and scheduler. Safe to call any number of times.
-    pub fn apply(&self) {
+    /// Regenerate the stylesheet from the theme + config (colors, fonts,
+    /// opacity). CSS-only: does NOT rebuild panels, so graph history survives.
+    /// Use this for appearance tweaks that don't change layout or structure.
+    pub fn restyle(&self) {
         let cfg = self.cfg.borrow();
         let theme = self.theme.borrow();
-        panels::set_gamma(cfg.bar.graph_gamma);
-        panels::set_palette(theme.palette());
-        panels::set_tray(cfg.tray.columns, cfg.tray.icon_size);
-        panels::set_temp_config(cfg.temp.clone());
-        panels::set_weather_config(cfg.weather.clone());
-        panels::set_mail_config(cfg.mail.clone());
-        panels::set_header_buttons(cfg.header.clone());
-
-        // Generate the whole stylesheet from the theme (colors + font); the bar
-        // background alpha comes from config opacity. Config font-size overrides
-        // (if any) win over the theme's defaults.
+        // Config font-size overrides (if any) win over the theme's defaults.
         let mut eff = theme.clone();
         if let Some(v) = cfg.font.small {
             eff.font_small = v;
@@ -92,8 +85,13 @@ impl BarHandle {
             eff.font_large = v;
         }
         self.theme_css.load_from_data(&eff.css(cfg.bar.opacity));
-        drop(theme);
+    }
 
+    /// Apply window geometry: monitor, stacking layer, edge/anchors, thickness,
+    /// length, orientation. No panel rebuild — the graphs adapt to the new
+    /// width, so this doesn't reset graph history either.
+    pub fn relayout(&self) {
+        let cfg = self.cfg.borrow();
         let monitor = target_monitor(&cfg);
         // Pin to the configured output if requested; monitor < 0 = compositor's
         // choice (but we still use the first output's geometry for full length).
@@ -150,7 +148,26 @@ impl BarHandle {
             self.root.set_orientation(Orientation::Vertical);
         }
         self.window.auto_exclusive_zone_enable();
+    }
 
+    /// Full re-render from the current config: styling, geometry, panels and
+    /// scheduler. Safe to call any number of times.
+    pub fn apply(&self) {
+        {
+            let cfg = self.cfg.borrow();
+            let theme = self.theme.borrow();
+            panels::set_gamma(cfg.bar.graph_gamma);
+            panels::set_palette(theme.palette());
+            panels::set_tray(cfg.tray.columns, cfg.tray.icon_size);
+            panels::set_temp_config(cfg.temp.clone());
+            panels::set_weather_config(cfg.weather.clone());
+            panels::set_mail_config(cfg.mail.clone());
+            panels::set_header_buttons(cfg.header.clone());
+        }
+        self.restyle();
+        self.relayout();
+
+        let cfg = self.cfg.borrow();
         // Rebuild panels: drop the old widgets, build fresh from config.
         while let Some(child) = self.root.first_child() {
             self.root.remove(&child);

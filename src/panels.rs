@@ -140,7 +140,12 @@ pub fn default_glyph(command: &str) -> &'static str {
         "\u{f08b}"
     } else if c.contains("reboot") {
         "\u{f021}"
-    } else if c.contains("term") || c.contains("foot") || c.contains("kitty") || c.contains("alacritty") || c.contains("ghostty") {
+    } else if c.contains("term")
+        || c.contains("foot")
+        || c.contains("kitty")
+        || c.contains("alacritty")
+        || c.contains("ghostty")
+    {
         "\u{f489}" // terminal
     } else {
         "" // unknown / blank → no glyph (don't force a placeholder dot)
@@ -1766,10 +1771,34 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     // fan_max is the RPM→full-bar scale for fan rows (0 = default).
     let mut specs: Vec<(String, RowKind, Rgba, Option<TempKey>, f64)> = Vec::new();
     if cfg.sensors.is_empty() {
-        specs.push(("cpu".into(), RowKind::Temp, pal().red, Some(TempKey::Cpu), 0.0));
-        specs.push(("gpu".into(), RowKind::Temp, pal().violet, Some(TempKey::Gpu), 0.0));
-        specs.push(("ssd".into(), RowKind::Temp, pal().cyan, Some(TempKey::Ssd), 0.0));
-        specs.push(("fan".into(), RowKind::Fan, pal().amber, Some(TempKey::Fan), 0.0));
+        specs.push((
+            "cpu".into(),
+            RowKind::Temp,
+            pal().red,
+            Some(TempKey::Cpu),
+            0.0,
+        ));
+        specs.push((
+            "gpu".into(),
+            RowKind::Temp,
+            pal().violet,
+            Some(TempKey::Gpu),
+            0.0,
+        ));
+        specs.push((
+            "ssd".into(),
+            RowKind::Temp,
+            pal().cyan,
+            Some(TempKey::Ssd),
+            0.0,
+        ));
+        specs.push((
+            "fan".into(),
+            RowKind::Fan,
+            pal().amber,
+            Some(TempKey::Fan),
+            0.0,
+        ));
     } else {
         let defaults = [
             pal().red,
@@ -1798,7 +1827,8 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
             } else {
                 hex_rgba(&s.color)
             };
-            let key = (kind != RowKind::Avg).then(|| TempKey::Chip(s.chip.clone(), s.input.clone()));
+            let key =
+                (kind != RowKind::Avg).then(|| TempKey::Chip(s.chip.clone(), s.input.clone()));
             specs.push((label, kind, color, key, s.fan_max));
         }
     }
@@ -1831,62 +1861,63 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     };
     let (temp_w, fan_w) = (label_w(RowKind::Temp), label_w(RowKind::Fan));
 
-    let make_row = |label: &str, kind: RowKind, color: Rgba, idx: Option<usize>, fan_max: f64| -> TempRow {
-        let row = GtkBox::new(Orientation::Horizontal, 4);
-        let lbl = Label::new(Some(label));
-        lbl.add_css_class("sub");
-        lbl.set_xalign(0.0);
-        lbl.set_width_chars(if kind == RowKind::Fan { fan_w } else { temp_w });
-        row.append(&lbl);
+    let make_row =
+        |label: &str, kind: RowKind, color: Rgba, idx: Option<usize>, fan_max: f64| -> TempRow {
+            let row = GtkBox::new(Orientation::Horizontal, 4);
+            let lbl = Label::new(Some(label));
+            lbl.add_css_class("sub");
+            lbl.set_xalign(0.0);
+            lbl.set_width_chars(if kind == RowKind::Fan { fan_w } else { temp_w });
+            row.append(&lbl);
 
-        let val = Label::new(Some("--"));
-        val.add_css_class("value");
-        val.set_xalign(1.0);
-        val.set_width_chars(if kind == RowKind::Fan { 5 } else { 3 });
+            let val = Label::new(Some("--"));
+            val.add_css_class("value");
+            val.set_xalign(1.0);
+            val.set_width_chars(if kind == RowKind::Fan { 5 } else { 3 });
 
-        // Fans get a level bar scaled to fan_max RPM (no trend graph); temps and
-        // the avg row get a 0..100 °C bar + trend graph.
-        let (bar, g) = if kind == RowKind::Fan {
-            let max = if fan_max > 0.0 { fan_max } else { FAN_MAX_RPM };
-            let bar = Bar::new(0, BAR_H, max, color);
-            bar.area.set_hexpand(true);
-            bar.area.set_valign(gtk::Align::Center);
-            row.append(&bar.area);
-            row.append(&val);
-            (Some(bar), None)
-        } else {
-            let bar = Bar::new(0, BAR_H, 100.0, color);
-            bar.area.set_hexpand(true);
-            bar.area.set_valign(gtk::Align::Center);
-            row.append(&bar.area);
-            row.append(&val);
-            let g = graph.then(|| {
-                let g = Graph::new(
-                    30,
-                    MINI_H,
-                    GraphScale::DynamicRange,
-                    1.0,
-                    &[(color, true)],
-                    interval,
-                    smooth,
-                    6.0, // °C floor so a steady sensor still shows a centered line
-                );
-                g.area.set_valign(gtk::Align::Center);
-                row.append(&g.area);
-                SMOOTH_GRAPHS.with(|v| v.borrow_mut().push(g.clone()));
-                g
-            });
-            (Some(bar), g)
+            // Fans get a level bar scaled to fan_max RPM (no trend graph); temps and
+            // the avg row get a 0..100 °C bar + trend graph.
+            let (bar, g) = if kind == RowKind::Fan {
+                let max = if fan_max > 0.0 { fan_max } else { FAN_MAX_RPM };
+                let bar = Bar::new(0, BAR_H, max, color);
+                bar.area.set_hexpand(true);
+                bar.area.set_valign(gtk::Align::Center);
+                row.append(&bar.area);
+                row.append(&val);
+                (Some(bar), None)
+            } else {
+                let bar = Bar::new(0, BAR_H, 100.0, color);
+                bar.area.set_hexpand(true);
+                bar.area.set_valign(gtk::Align::Center);
+                row.append(&bar.area);
+                row.append(&val);
+                let g = graph.then(|| {
+                    let g = Graph::new(
+                        30,
+                        MINI_H,
+                        GraphScale::DynamicRange,
+                        1.0,
+                        &[(color, true)],
+                        interval,
+                        smooth,
+                        6.0, // °C floor so a steady sensor still shows a centered line
+                    );
+                    g.area.set_valign(gtk::Align::Center);
+                    row.append(&g.area);
+                    SMOOTH_GRAPHS.with(|v| v.borrow_mut().push(g.clone()));
+                    g
+                });
+                (Some(bar), g)
+            };
+            root.append(&row);
+            TempRow {
+                bar,
+                graph: g,
+                val,
+                idx,
+                kind,
+            }
         };
-        root.append(&row);
-        TempRow {
-            bar,
-            graph: g,
-            val,
-            idx,
-            kind,
-        }
-    };
 
     let rows: Vec<TempRow> = row_specs
         .into_iter()
@@ -2091,7 +2122,11 @@ fn header_button(icon: &str, command: &str, color: &str, actions: &Actions) -> g
     let btn = gtk::Button::new();
     btn.add_css_class("hbtn");
     // Blank icon → fall back to a command-appropriate glyph so it's never empty.
-    let icon = if icon.is_empty() { default_glyph(command) } else { icon };
+    let icon = if icon.is_empty() {
+        default_glyph(command)
+    } else {
+        icon
+    };
     let icon = &icon;
     if color.is_empty() {
         btn.set_label(icon);

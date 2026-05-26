@@ -48,7 +48,10 @@ pub fn open(handle: &BarHandle) {
     notebook.append_page(&general_page(handle), Some(&Label::new(Some("General"))));
     notebook.append_page(&theme_page(handle), Some(&Label::new(Some("Theme"))));
     notebook.append_page(&layout_page(handle), Some(&Label::new(Some("Layout"))));
-    notebook.append_page(&panels_config_page(handle), Some(&Label::new(Some("Panels"))));
+    notebook.append_page(
+        &panels_config_page(handle),
+        Some(&Label::new(Some("Panels"))),
+    );
 
     let window = Window::builder()
         .title("xerotop preferences")
@@ -155,7 +158,7 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     let h = handle.clone();
     edge.connect_selected_notify(move |d| {
         h.cfg.borrow_mut().bar.edge = edge_from_index(d.selected());
-        h.apply();
+        h.relayout();
     });
     page.append(&row("Edge", &edge));
 
@@ -165,7 +168,7 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     let h = handle.clone();
     thick.connect_value_changed(move |s| {
         h.cfg.borrow_mut().bar.thickness = s.value() as i32;
-        h.apply();
+        h.relayout();
     });
     page.append(&row("Thickness (px)", &thick));
 
@@ -216,7 +219,7 @@ fn general_page(handle: &BarHandle) -> GtkBox {
                     _ => Align::Center,
                 };
             }
-            h.apply();
+            h.relayout();
         })
     };
     {
@@ -241,7 +244,7 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     let h = handle.clone();
     mon.connect_value_changed(move |s| {
         h.cfg.borrow_mut().bar.monitor = s.value() as i32;
-        h.apply();
+        h.relayout();
     });
     page.append(&row("Monitor (-1 = auto)", &mon));
 
@@ -261,7 +264,7 @@ fn general_page(handle: &BarHandle) -> GtkBox {
             3 => Layer::Overlay,
             _ => Layer::Top,
         };
-        h.apply();
+        h.relayout();
     });
     page.append(&row("Layer (bottom = windows over bar)", &layer));
 
@@ -274,7 +277,7 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     let h = handle.clone();
     opacity.connect_value_changed(move |s| {
         h.cfg.borrow_mut().bar.opacity = s.value();
-        h.apply();
+        h.restyle();
     });
     page.append(&row("Opacity", &opacity));
 
@@ -475,26 +478,47 @@ fn mail_detail(handle: &BarHandle) -> GtkBox {
 type Getter = fn(&Theme) -> String;
 type Setter = fn(&mut Theme, String);
 
+// Each color: name, getter, setter, and whether it's a graph-palette color.
+// Graph colors are baked into the canvas-drawn graphs at build time, so editing
+// one needs a full rebuild; the rest are pure CSS and only need a restyle (no
+// rebuild → graph history survives).
 #[allow(clippy::type_complexity)]
-const COLOR_FIELDS: [(&str, Getter, Setter); 10] = [
+const COLOR_FIELDS: [(&str, Getter, Setter, bool); 10] = [
     (
         "Background",
         |t| t.background.clone(),
         |t, v| t.background = v,
+        false,
     ),
     (
         "Foreground",
         |t| t.foreground.clone(),
         |t, v| t.foreground = v,
+        false,
     ),
-    ("Header / accent", |t| t.label.clone(), |t, v| t.label = v),
-    ("Muted", |t| t.muted.clone(), |t, v| t.muted = v),
-    ("Graph green", |t| t.green.clone(), |t, v| t.green = v),
-    ("Graph cyan", |t| t.cyan.clone(), |t, v| t.cyan = v),
-    ("Graph amber", |t| t.amber.clone(), |t, v| t.amber = v),
-    ("Graph red", |t| t.red.clone(), |t, v| t.red = v),
-    ("Graph violet", |t| t.violet.clone(), |t, v| t.violet = v),
-    ("Keyboard LED", |t| t.led_on.clone(), |t, v| t.led_on = v),
+    (
+        "Header / accent",
+        |t| t.label.clone(),
+        |t, v| t.label = v,
+        false,
+    ),
+    ("Muted", |t| t.muted.clone(), |t, v| t.muted = v, false),
+    ("Graph green", |t| t.green.clone(), |t, v| t.green = v, true),
+    ("Graph cyan", |t| t.cyan.clone(), |t, v| t.cyan = v, true),
+    ("Graph amber", |t| t.amber.clone(), |t, v| t.amber = v, true),
+    ("Graph red", |t| t.red.clone(), |t, v| t.red = v, true),
+    (
+        "Graph violet",
+        |t| t.violet.clone(),
+        |t, v| t.violet = v,
+        true,
+    ),
+    (
+        "Keyboard LED",
+        |t| t.led_on.clone(),
+        |t, v| t.led_on = v,
+        false,
+    ),
 ];
 
 fn theme_page(handle: &BarHandle) -> GtkBox {
@@ -523,7 +547,7 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
             && let Some(fam) = desc.family()
         {
             h.theme.borrow_mut().font_family = fam.to_string();
-            h.apply();
+            h.restyle();
         }
     });
     page.append(&row("Font", &font_btn));
@@ -532,23 +556,25 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
     // overrides — they win over the theme's defaults and persist independently,
     // so switching themes doesn't wipe your sizing. Initial value = override if
     // set, else the active theme's size.
-    let font_size_spin = |theme_get: fn(&Theme) -> i32,
-                          cfg_get: fn(&crate::config::FontConfig) -> Option<i32>,
-                          cfg_set: fn(&mut crate::config::FontConfig, Option<i32>)| {
-        let sp = SpinButton::with_range(4.0, 96.0, 1.0);
-        let initial = cfg_get(&handle.cfg.borrow().font).unwrap_or_else(|| theme_get(&handle.theme.borrow()));
-        sp.set_value(initial as f64);
-        let h = handle.clone();
-        let ld = loading.clone();
-        sp.connect_value_changed(move |s| {
-            if ld.get() {
-                return;
-            }
-            cfg_set(&mut h.cfg.borrow_mut().font, Some(s.value() as i32));
-            h.apply();
-        });
-        sp
-    };
+    let font_size_spin =
+        |theme_get: fn(&Theme) -> i32,
+         cfg_get: fn(&crate::config::FontConfig) -> Option<i32>,
+         cfg_set: fn(&mut crate::config::FontConfig, Option<i32>)| {
+            let sp = SpinButton::with_range(4.0, 96.0, 1.0);
+            let initial = cfg_get(&handle.cfg.borrow().font)
+                .unwrap_or_else(|| theme_get(&handle.theme.borrow()));
+            sp.set_value(initial as f64);
+            let h = handle.clone();
+            let ld = loading.clone();
+            sp.connect_value_changed(move |s| {
+                if ld.get() {
+                    return;
+                }
+                cfg_set(&mut h.cfg.borrow_mut().font, Some(s.value() as i32));
+                h.restyle();
+            });
+            sp
+        };
     let f_small = font_size_spin(|t| t.font_small, |f| f.small, |f, v| f.small = v);
     let f_normal = font_size_spin(|t| t.font_normal, |f| f.normal, |f, v| f.normal = v);
     let f_large = font_size_spin(|t| t.font_large, |f| f.large, |f, v| f.large = v);
@@ -565,7 +591,7 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
     grid.set_row_spacing(6);
     grid.set_column_spacing(16);
     grid.set_margin_top(4);
-    for (i, (name, get, set)) in COLOR_FIELDS.into_iter().enumerate() {
+    for (i, (name, get, set, graph)) in COLOR_FIELDS.into_iter().enumerate() {
         let btn = ColorDialogButton::new(Some(ColorDialog::new()));
         btn.set_rgba(&hex_to_rgba(&get(&handle.theme.borrow())));
         let h = handle.clone();
@@ -579,7 +605,12 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
                 let mut t = h.theme.borrow_mut();
                 set(&mut t, hex);
             }
-            h.apply();
+            // Graph colors are baked into the graphs → rebuild; the rest are CSS.
+            if graph {
+                h.apply();
+            } else {
+                h.restyle();
+            }
         });
         let lbl = Label::new(Some(name));
         lbl.set_xalign(0.0);
@@ -1182,7 +1213,9 @@ fn header_slot_row(handle: &BarHandle, slot: HeaderSlot, name: &str) -> GtkBox {
     rows.push("custom…".to_string());
     let picker = DropDown::from_strings(&rows.iter().map(|s| s.as_str()).collect::<Vec<_>>());
     picker.add_css_class("glyphpick"); // force the Nerd Font
-    picker.set_tooltip_text(Some("Pick a glyph, 'none' to disable, or 'custom…' to type one"));
+    picker.set_tooltip_text(Some(
+        "Pick a glyph, 'none' to disable, or 'custom…' to type one",
+    ));
     // Custom factory: enlarge just the leading glyph (rows are "<glyph>  name"),
     // leaving the name at the normal font size.
     let factory = SignalListItemFactory::new();
@@ -1194,13 +1227,17 @@ fn header_slot_row(handle: &BarHandle, slot: HeaderSlot, name: &str) -> GtkBox {
         }
     });
     factory.connect_bind(|_, item| {
-        let Some(item) = item.downcast_ref::<ListItem>() else { return };
+        let Some(item) = item.downcast_ref::<ListItem>() else {
+            return;
+        };
         let text = item
             .item()
             .and_then(|o| o.downcast::<StringObject>().ok())
             .map(|s| s.string().to_string())
             .unwrap_or_default();
-        let Some(label) = item.child().and_downcast::<Label>() else { return };
+        let Some(label) = item.child().and_downcast::<Label>() else {
+            return;
+        };
         // "<glyph>  name" → big glyph + normal name; other rows render plain.
         let mut chars = text.chars();
         let first = chars.next();
@@ -1265,7 +1302,10 @@ fn header_slot_row(handle: &BarHandle, slot: HeaderSlot, name: &str) -> GtkBox {
                 custom_c.text().to_string()
             } else {
                 // rows are offset by 1 (leading "none")
-                glyphs.get(sel as usize - 1).map(|(_, g)| g.to_string()).unwrap_or_default()
+                glyphs
+                    .get(sel as usize - 1)
+                    .map(|(_, g)| g.to_string())
+                    .unwrap_or_default()
             }
         }
     };
@@ -1534,12 +1574,20 @@ fn panel_detail(handle: &BarHandle, i: usize) -> GtkBox {
                 let p = &cfg.panel[i];
                 (p.time_format.clone(), p.date_format.clone())
             };
-            page.append(&fmt_row(handle, "Time format", "%I:%M %p", tf.as_deref(), |p, v| {
-                p.time_format = v
-            }));
-            page.append(&fmt_row(handle, "Date format", "%a %d %b", df.as_deref(), |p, v| {
-                p.date_format = v
-            }));
+            page.append(&fmt_row(
+                handle,
+                "Time format",
+                "%I:%M %p",
+                tf.as_deref(),
+                |p, v| p.time_format = v,
+            ));
+            page.append(&fmt_row(
+                handle,
+                "Date format",
+                "%a %d %b",
+                df.as_deref(),
+                |p, v| p.date_format = v,
+            ));
             page
         }
         // Panels with nothing to configure beyond presence/order.
@@ -1723,7 +1771,11 @@ fn save_config(handle: &BarHandle) -> std::io::Result<std::path::PathBuf> {
     // the current theme (incl. "default") survive a restart — config.toml only
     // stores the theme *name*.
     let name = handle.cfg.borrow().theme.clone();
-    let name = if name.is_empty() { "default".to_string() } else { name };
+    let name = if name.is_empty() {
+        "default".to_string()
+    } else {
+        name
+    };
     if crate::theme::is_valid_name(&name) {
         // If the active theme bundles panel colors, refresh that bundle from the
         // live config so it doesn't go stale relative to edits made since the
