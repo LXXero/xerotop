@@ -3,18 +3,6 @@
 Running list of planned work and ideas. Done items live in git history; this is
 what's *not* built yet.
 
-## Configurability (the old "Phase 3")
-
-Hardcoded constants that should become config/theme knobs:
-
-- *(optional)* **Configurable `top` EMA alpha** — the `top` list is already
-  EMA-smoothed (`metrics.rs` `ALPHA = 0.3`, calm by design); exposing alpha as a
-  knob is the only open bit, and low value since it isn't jittery. Skip unless
-  asked.
-
-(Done: per-panel graph height, per-panel graph time window, global meter-bar
-thickness, top-list count, vol/bri scroll step.)
-
 ## Panels / widgets to add
 
 - **Now playing (MPRIS)** — current track/artist + play-pause over D-Bus (we
