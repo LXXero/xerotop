@@ -570,6 +570,7 @@ fn uptime_panel(interval: f64, show_load: bool) -> Panel {
     let row = GtkBox::new(Orientation::Horizontal, 4);
     let icon = Label::new(Some("\u{f252}")); //  hourglass (uptime — clock's in the header)
     icon.add_css_class("meter-icon");
+    icon.add_css_class("uptime-icon"); // trim its larger em to match the column
     icon.set_size_request(ICON_W, -1);
     icon.set_xalign(0.5);
     icon.set_valign(gtk::Align::Center);

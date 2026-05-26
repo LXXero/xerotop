@@ -153,6 +153,8 @@ window.xerotop {{ background-color: transparent; }}
    an in-place repaint instead of a width change that relayouts the bar. */
 .value {{ color: {value}; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
 .meter-icon {{ color: {icon}; font-size: 20px; }}
+/* the hourglass fills its em more than the FA glyphs — trim it to match. */
+.uptime-icon {{ font-size: 16px; }}
 /* weather (nf-weather e3xx) glyphs render smaller per-em, so bump the font to
    match the meter/keyboard glyphs' visual size; the negative margins claw back
    the line-box padding the bigger font adds, so the weather row stays the same
