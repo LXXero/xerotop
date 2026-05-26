@@ -334,7 +334,7 @@ impl Default for MailConfig {
         Self {
             dir: String::new(),
             command: "xfce4-terminal -e mutt".into(),
-            interval_s: 5.0,
+            interval_s: 15.0,
         }
     }
 }

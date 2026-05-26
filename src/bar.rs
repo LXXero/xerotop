@@ -191,6 +191,9 @@ impl BarHandle {
         for p in &panels {
             (p.update)();
         }
+        // Any polling worker now lacking a panel (e.g. one was just removed) has
+        // an empty callback list → drop it so its thread stops sampling.
+        panels::stop_idle_hosts();
 
         // Single central scheduler: a 250 ms base tick updates each panel when
         // its (possibly fractional) interval has elapsed, stretched by the

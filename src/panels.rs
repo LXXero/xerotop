@@ -211,6 +211,30 @@ pub fn reset_panel_hosts() {
     });
 }
 
+/// Stop the polling worker threads (weather/mail/sensors) that no live panel is
+/// consuming. Call *after* a rebuild: a host with an empty callback list has no
+/// panel, so drop the singleton — that drops its request `Sender`, the worker's
+/// `recv` hits `Disconnected`, and the thread exits (re-spawned lazily if the
+/// panel comes back). Battery-first: no point sampling for nobody. Tray/taskbar
+/// are event-driven (idle until a D-Bus/wlr event), so they're left running.
+pub fn stop_idle_hosts() {
+    WEATHER_HOST.with(|c| {
+        if matches!(c.borrow().as_ref(), Some(h) if h.render.borrow().is_empty()) {
+            *c.borrow_mut() = None;
+        }
+    });
+    MAIL_HOST.with(|c| {
+        if matches!(c.borrow().as_ref(), Some(h) if h.render.borrow().is_empty()) {
+            *c.borrow_mut() = None;
+        }
+    });
+    TEMP_HOST.with(|c| {
+        if matches!(c.borrow().as_ref(), Some(h) if h.render.borrow().is_empty()) {
+            *c.borrow_mut() = None;
+        }
+    });
+}
+
 /// Set the level-meter bar thickness (px). Call before (re)building panels.
 pub fn set_meter_thickness(px: i32) {
     METER_H.with(|c| c.set(px.max(2)));

@@ -135,7 +135,7 @@ interval_min = 30
 [mail]
 dir = ""                       # maildir root (has new/ + cur/); blank = ~/.maildir
 command = "xfce4-terminal -e mutt"  # run on click
-interval_s = 5
+interval_s = 15
 
 [actions]                           # logout/reboot/shutdown power the @menu popover
 lock = "loginctl lock-session"
