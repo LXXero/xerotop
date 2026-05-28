@@ -851,6 +851,7 @@ fn layout_page(handle: &BarHandle) -> GtkBox {
             scroll_step: None,
             time_format: None,
             date_format: None,
+            human_readable: None,
         });
         h.apply();
         populate_panels(&h, &list_c);
@@ -1738,6 +1739,22 @@ fn panel_detail(handle: &BarHandle, i: usize) -> GtkBox {
                 h.apply();
             });
             page.append(&row("Processes shown", &n));
+            page
+        }
+        "net" => {
+            let page = generic_detail(handle, i, "net");
+            let hr = CheckButton::with_label(
+                "Human-readable (K→M/G suffix once raw exceeds 4 digits)",
+            );
+            hr.set_active(handle.cfg.borrow().panel[i].human_readable.unwrap_or(true));
+            let h = handle.clone();
+            hr.connect_toggled(move |c| {
+                if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                    p.human_readable = Some(c.is_active());
+                }
+                h.apply();
+            });
+            page.append(&hr);
             page
         }
         "uptime" => {

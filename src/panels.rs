@@ -302,7 +302,12 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
         "top" => Some(top_panel(iv, cfg.count.unwrap_or(5).clamp(1, 20))),
         "gpu" => Some(gpu_panel(iv, cfg.graph, smooth)),
         "disk" => Some(disk_panel(iv, cfg.graph, smooth)),
-        "net" => Some(net_panel(iv, cfg.graph, smooth)),
+        "net" => Some(net_panel(
+            iv,
+            cfg.graph,
+            smooth,
+            cfg.human_readable.unwrap_or(true),
+        )),
         "tasks" => Some(taskbar_panel()),
         "tray" => Some(tray_panel()),
         "battery" => Some(bar_panel(
@@ -986,7 +991,7 @@ fn weather_panel() -> Panel {
     }
 }
 
-fn net_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
+fn net_panel(interval: f64, graph: bool, smooth: bool, human: bool) -> Panel {
     let root = panel_box();
     let (row, val) = header("NET");
     root.append(&row);
@@ -1011,7 +1016,11 @@ fn net_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     let net = Rc::new(RefCell::new(Net::new()));
     let update = Box::new(move || {
         let (down, upl) = net.borrow_mut().sample();
-        val.set_text(&format!("\u{2193}{down:.0} \u{2191}{upl:.0}"));
+        val.set_text(&format!(
+            "\u{2193}{} \u{2191}{}",
+            fmt_kbps(down, human),
+            fmt_kbps(upl, human),
+        ));
         if let Some(g) = &dn {
             g.push(&[down]);
         }
@@ -1023,6 +1032,28 @@ fn net_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         root: root.upcast(),
         interval,
         update,
+    }
+}
+
+/// Format a KB/s rate. With `human` on, the result is capped at 4 chars: raw
+/// integer up to 9999, then `9.9M` → `999M` → `9.9G` → `999G`. Off = always raw
+/// integer KB/s (original behavior; can grow unbounded).
+fn fmt_kbps(v: f64, human: bool) -> String {
+    if !human || v < 9999.5 {
+        return format!("{v:.0}");
+    }
+    let mb = v / 1024.0;
+    if mb < 9.95 {
+        return format!("{mb:.1}M");
+    }
+    if mb < 999.5 {
+        return format!("{mb:.0}M");
+    }
+    let gb = mb / 1024.0;
+    if gb < 9.95 {
+        format!("{gb:.1}G")
+    } else {
+        format!("{gb:.0}G")
     }
 }
 

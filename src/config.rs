@@ -297,6 +297,11 @@ pub struct PanelConfig {
     pub time_format: Option<String>,
     #[serde(default)]
     pub date_format: Option<String>,
+    /// net panel only: rescale transfer speeds to K/M/G once the raw KB/s would
+    /// exceed 4 digits, so the panel stops stretching on big transfers. None or
+    /// true = humanize; false = always raw KB/s.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub human_readable: Option<bool>,
 }
 
 fn default_interval() -> f64 {
@@ -388,6 +393,7 @@ fn default_panels() -> Vec<PanelConfig> {
         scroll_step: None,
         time_format: None,
         date_format: None,
+        human_readable: None,
     })
     .collect()
 }
