@@ -1021,7 +1021,7 @@ fn panel_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> GtkBox {
     });
     r.append(&down);
 
-    let del = Button::from_icon_name("user-trash-symbolic");
+    let del = Button::from_icon_name("edit-delete-symbolic");
     let h = handle.clone();
     let list_c = list.clone();
     del.connect_clicked(move |_| {
@@ -1281,7 +1281,7 @@ fn temp_sensor_row(handle: &BarHandle, list: &ListBox, i: usize, n: usize) -> Gt
     });
     r.append(&down);
 
-    let del = Button::from_icon_name("user-trash-symbolic");
+    let del = Button::from_icon_name("edit-delete-symbolic");
     let h = handle.clone();
     let list_c = list.clone();
     del.connect_clicked(move |_| {
