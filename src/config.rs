@@ -302,6 +302,17 @@ pub struct PanelConfig {
     /// true = humanize; false = always raw KB/s.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub human_readable: Option<bool>,
+    /// tasks panel only: drop window titles and lay the app icons out in a grid
+    /// (dock/macOS-style) instead of icon+title rows.
+    #[serde(default)]
+    pub icons_only: bool,
+    /// tasks/tray-style panels: icons per row before wrapping. tasks only uses
+    /// it in `icons_only` mode. None = 1 (a single column).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub columns: Option<i32>,
+    /// tasks panel only: app-icon size in px. None = 16.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_size: Option<i32>,
 }
 
 fn default_interval() -> f64 {
@@ -394,6 +405,9 @@ fn default_panels() -> Vec<PanelConfig> {
         time_format: None,
         date_format: None,
         human_readable: None,
+        icons_only: false,
+        columns: None,
+        icon_size: None,
     })
     .collect()
 }
@@ -567,6 +581,10 @@ interval = 3
 
 [[panel]]
 type = "tasks"      # open windows via wlr-foreign-toplevel
+# icons_only = false # true = dock-style icon grid (titles on hover), no text
+# columns = 1        # icons per row before wrapping (icons_only mode)
+# icon_size = 16     # app-icon size in px
+# show_label = true  # the "TASKS" header row
 
 [[panel]]
 type = "tray"       # system tray (StatusNotifier)

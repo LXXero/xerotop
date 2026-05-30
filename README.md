@@ -56,7 +56,9 @@ Working:
   of both the time and date), each a custom glyph + command + color (`@menu`
   opens the power popover)
 - **tasks** (`tasks`): open windows via wlr-foreign-toplevel — app icons, focus
-  highlight, minimized = grayed/italic, left-click activate, right-click minimize
+  highlight, minimized = grayed/italic, left-click activate, right-click minimize.
+  Two layouts: icon+title rows, or an `icons_only` dock-style grid (titles on
+  hover) with configurable icons-per-row + icon size
 - **system tray** (`tray`): StatusNotifier host — themed/pixmap icons,
   left-click activate, right-click **cascading D-Bus menu** with hover submenus
   and full `AboutToShow` support; menu item ids are resolved by path from the

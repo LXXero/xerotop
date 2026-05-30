@@ -169,6 +169,10 @@ thread_local! {
     /// panel's `graph_window`; `0.0` = use the Graph's built-in WINDOW_SECS.
     static GRAPH_WIN_OVERRIDE: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
 
+    /// Tasks-panel layout, set in `build()` from the panel config:
+    /// `(icons_only, columns, icon_size)`. Read once by `taskbar_panel()`.
+    static TASK_CFG: std::cell::Cell<(bool, i32, i32)> = const { std::cell::Cell::new((false, 1, 16)) };
+
     /// Level-meter bar thickness (px), a global config knob. Set per-apply.
     static METER_H: std::cell::Cell<i32> = const { std::cell::Cell::new(7) };
 
@@ -262,6 +266,13 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
     SHOW_LABEL.with(|c| c.set(cfg.show_label));
     GRAPH_H_OVERRIDE.with(|c| c.set(cfg.graph_height.filter(|&h| h > 0)));
     GRAPH_WIN_OVERRIDE.with(|c| c.set(cfg.graph_window.filter(|&w| w > 0.0).unwrap_or(0.0)));
+    TASK_CFG.with(|c| {
+        c.set((
+            cfg.icons_only,
+            cfg.columns.unwrap_or(1).max(1),
+            cfg.icon_size.unwrap_or(16).max(1),
+        ))
+    });
     let clock_fmts = || {
         (
             cfg.time_format.clone().unwrap_or_else(|| "%I:%M %p".into()),
@@ -1761,52 +1772,106 @@ fn taskbar_host() -> TaskbarHost {
 }
 
 /// Taskbar: open windows via wlr-foreign-toplevel, repainted on each snapshot.
+///
+/// Two layouts (TASK_CFG, set from the panel config): the default icon+title
+/// rows, or an `icons_only` grid (dock/macOS-style) that wraps every `columns`
+/// icons, with the title moved to a tooltip.
 fn taskbar_panel() -> Panel {
+    let (icons_only, columns, icon_size) = TASK_CFG.with(|c| c.get());
+
     let root = panel_box();
     root.add_css_class("taskbar");
-    let head = Label::new(Some("TASKS"));
-    head.add_css_class("label");
-    head.set_xalign(0.0);
-    root.append(&head);
-    let list = GtkBox::new(Orientation::Vertical, 1);
-    root.append(&list);
+    if SHOW_LABEL.with(|c| c.get()) {
+        let head = Label::new(Some("TASKS"));
+        head.add_css_class("label");
+        head.set_xalign(0.0);
+        root.append(&head);
+    }
+
+    // The container holding the per-window buttons: a wrapping FlowBox for the
+    // icon grid, or a plain vertical box for the icon+title rows.
+    let grid = icons_only.then(|| {
+        let flow = gtk::FlowBox::new();
+        flow.set_selection_mode(gtk::SelectionMode::None);
+        flow.set_min_children_per_line(1);
+        flow.set_max_children_per_line(columns as u32);
+        flow.set_homogeneous(false);
+        root.append(&flow);
+        flow
+    });
+    let list = (!icons_only).then(|| {
+        let b = GtkBox::new(Orientation::Vertical, 1);
+        root.append(&b);
+        b
+    });
 
     let host = taskbar_host();
     let atx = host.atx.clone();
-    let list2 = list.clone();
 
     let render: TaskbarRenderFn = Rc::new(move |tops| {
-        while let Some(child) = list2.first_child() {
-            list2.remove(&child);
+        if let Some(flow) = &grid {
+            while let Some(child) = flow.first_child() {
+                flow.remove(&child);
+            }
+        }
+        if let Some(list) = &list {
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
         }
         for t in tops {
-            let row = GtkBox::new(Orientation::Horizontal, 4);
-            if let Some(img) = resolve_icon(&t.app_id) {
-                img.set_pixel_size(16);
-                row.append(&img);
-            }
-            let text = if t.title.is_empty() {
-                t.app_id.clone()
-            } else {
-                t.title.clone()
-            };
-            let lbl = Label::new(Some(&text));
-            lbl.set_xalign(0.0);
-            lbl.set_hexpand(true);
-            lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            lbl.set_width_chars(1);
-            lbl.set_max_width_chars(1); // ellipsize within the bar width
-            row.append(&lbl);
-
             let btn = gtk::Button::new();
             btn.add_css_class("task");
+            btn.set_has_frame(false);
             if t.activated {
                 btn.add_css_class("task-active");
             }
             if t.minimized {
                 btn.add_css_class("task-min");
             }
-            btn.set_child(Some(&row));
+
+            if icons_only {
+                let title = if t.title.is_empty() {
+                    t.app_id.clone()
+                } else {
+                    t.title.clone()
+                };
+                btn.set_tooltip_text(Some(&title));
+                match resolve_icon(&t.app_id) {
+                    Some(img) => {
+                        img.set_pixel_size(icon_size);
+                        btn.set_child(Some(&img));
+                    }
+                    // No icon resolved: fall back to a short label so the window
+                    // is still clickable rather than an empty square.
+                    None => {
+                        let lbl = Label::new(Some(t.app_id.split('.').next_back().unwrap_or("?")));
+                        lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                        lbl.set_max_width_chars(6);
+                        btn.set_child(Some(&lbl));
+                    }
+                }
+            } else {
+                let row = GtkBox::new(Orientation::Horizontal, 4);
+                if let Some(img) = resolve_icon(&t.app_id) {
+                    img.set_pixel_size(icon_size);
+                    row.append(&img);
+                }
+                let text = if t.title.is_empty() {
+                    t.app_id.clone()
+                } else {
+                    t.title.clone()
+                };
+                let lbl = Label::new(Some(&text));
+                lbl.set_xalign(0.0);
+                lbl.set_hexpand(true);
+                lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                lbl.set_width_chars(1);
+                lbl.set_max_width_chars(1); // ellipsize within the bar width
+                row.append(&lbl);
+                btn.set_child(Some(&row));
+            }
+
             let id = t.id;
             {
                 let atx = atx.clone();
@@ -1823,7 +1888,12 @@ fn taskbar_panel() -> Panel {
                 });
                 btn.add_controller(right);
             }
-            list2.append(&btn);
+
+            match (&grid, &list) {
+                (Some(flow), _) => flow.insert(&btn, -1),
+                (_, Some(list)) => list.append(&btn),
+                _ => {}
+            }
         }
     });
     render(&host.latest.borrow());

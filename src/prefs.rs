@@ -418,6 +418,67 @@ fn tray_detail(handle: &BarHandle) -> GtkBox {
     page
 }
 
+/// Tasks panel options: header toggle + icon+title rows vs an icons-only grid.
+fn tasks_detail(handle: &BarHandle, i: usize) -> GtkBox {
+    let page = page_box();
+
+    // The "TASKS" header row (reuses the shared show_label knob).
+    page.append(&show_label_check(handle, i));
+
+    let cfg = handle.cfg.borrow();
+
+    // Layout: icon+title rows (off) vs an icons-only grid (on).
+    let icons_only = CheckButton::with_label("Icons only (dock-style grid, titles on hover)");
+    icons_only.set_active(cfg.panel.get(i).map(|p| p.icons_only).unwrap_or(false));
+
+    let cols = SpinButton::with_range(1.0, 32.0, 1.0);
+    cols.set_width_chars(5);
+    cols.set_value(cfg.panel.get(i).and_then(|p| p.columns).unwrap_or(1) as f64);
+    let cols_row = row("Icons per row", &cols);
+
+    let size = SpinButton::with_range(8.0, 64.0, 1.0);
+    size.set_width_chars(5);
+    size.set_value(cfg.panel.get(i).and_then(|p| p.icon_size).unwrap_or(16) as f64);
+    drop(cfg);
+
+    // "Icons per row" only applies to the grid layout — grey it out otherwise.
+    cols_row.set_sensitive(icons_only.is_active());
+    {
+        let cols_row = cols_row.clone();
+        let h = handle.clone();
+        icons_only.connect_toggled(move |c| {
+            cols_row.set_sensitive(c.is_active());
+            if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                p.icons_only = c.is_active();
+            }
+            h.apply();
+        });
+    }
+    {
+        let h = handle.clone();
+        cols.connect_value_changed(move |s| {
+            if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                p.columns = Some(s.value() as i32);
+            }
+            h.apply();
+        });
+    }
+    {
+        let h = handle.clone();
+        size.connect_value_changed(move |s| {
+            if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                p.icon_size = Some(s.value() as i32);
+            }
+            h.apply();
+        });
+    }
+
+    page.append(&icons_only);
+    page.append(&cols_row);
+    page.append(&row("Icon size (px)", &size));
+    page
+}
+
 /// Weather panel options: location / units / refresh / condition text.
 fn weather_detail(handle: &BarHandle) -> GtkBox {
     let page = page_box();
@@ -852,6 +913,9 @@ fn layout_page(handle: &BarHandle) -> GtkBox {
             time_format: None,
             date_format: None,
             human_readable: None,
+            icons_only: false,
+            columns: None,
+            icon_size: None,
         });
         h.apply();
         populate_panels(&h, &list_c);
@@ -1773,16 +1837,7 @@ fn panel_detail(handle: &BarHandle, i: usize) -> GtkBox {
             page
         }
         // Panels with nothing to configure beyond presence/order.
-        "tasks" => {
-            let page = page_box();
-            let l = Label::new(Some(
-                "The tasks panel has no options — it lists open windows.",
-            ));
-            l.set_wrap(true);
-            l.set_xalign(0.0);
-            page.append(&l);
-            page
-        }
+        "tasks" => tasks_detail(handle, i),
         // Everything else is a metric panel: interval (+ graph where relevant).
         _ => generic_detail(handle, i, &kind),
     }
