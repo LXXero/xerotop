@@ -158,6 +158,7 @@ impl BarHandle {
             panels::set_meter_thickness(cfg.bar.meter_thickness);
             panels::set_palette(theme.palette());
             panels::set_tray(cfg.tray.columns, cfg.tray.icon_size);
+            panels::set_horizontal(cfg.bar.edge.is_horizontal());
             panels::set_temp_config(cfg.temp.clone());
             panels::set_weather_config(cfg.weather.clone());
             panels::set_mail_config(cfg.mail.clone());
@@ -180,7 +181,12 @@ impl BarHandle {
         panels::reset_smooth_registry(); // old graphs are about to be dropped
         panels::reset_panel_hosts(); // and old host callbacks must stop firing
         let mut panels: Vec<Panel> = Vec::new();
-        for pcfg in cfg.panel.iter() {
+        let build_order: Box<dyn Iterator<Item = &crate::config::PanelConfig>> = if cfg.bar.reverse {
+            Box::new(cfg.panel.iter().rev())
+        } else {
+            Box::new(cfg.panel.iter())
+        };
+        for pcfg in build_order {
             if let Some(panel) = panels::build(pcfg, smooth, &cfg.actions) {
                 self.root.append(&panel.root);
                 panels.push(panel);

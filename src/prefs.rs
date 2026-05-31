@@ -184,9 +184,23 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     let h = handle.clone();
     edge.connect_selected_notify(move |d| {
         h.cfg.borrow_mut().bar.edge = edge_from_index(d.selected());
-        h.relayout();
+        // Full apply, not just relayout: edge flips the bar's orientation, and
+        // tasks/tray bake orientation in at build time (set_horizontal), so the
+        // panels must be rebuilt — relayout() alone would leave them stale.
+        h.apply();
     });
     page.append(&row("Edge", &edge));
+
+    // Reverse panel order (clock/header at the end — handy on horizontal bars).
+    let reverse = Switch::new();
+    reverse.set_active(cfg.bar.reverse);
+    reverse.set_valign(gtk::Align::Center);
+    let h = handle.clone();
+    reverse.connect_active_notify(move |s| {
+        h.cfg.borrow_mut().bar.reverse = s.is_active();
+        h.apply();
+    });
+    page.append(&row("Reverse panel order", &reverse));
 
     // Thickness
     let thick = SpinButton::with_range(20.0, 600.0, 2.0);
@@ -907,6 +921,7 @@ fn layout_page(handle: &BarHandle) -> GtkBox {
             show_label: true,
             graph_height: None,
             graph_window: None,
+            graph_width: None,
             count: None,
             show_load: false,
             scroll_step: None,
@@ -1094,6 +1109,9 @@ fn temp_detail(handle: &BarHandle, i: usize) -> GtkBox {
     page.append(&graph);
     page.append(&graph_height_row(handle, i, 14)); // MINI_H default
     page.append(&graph_window_row(handle, i));
+    if handle.cfg.borrow().bar.edge.is_horizontal() {
+        page.append(&graph_width_row(handle, i));
+    }
     page.append(&Label::new(Some(
         "Add sensors (or an 'average' row) from the dropdown; reorder/label/color each. Empty = auto-detect.",
     )));
@@ -1718,6 +1736,22 @@ fn graph_window_row(handle: &BarHandle, i: usize) -> GtkBox {
     row("Graph window (s)", &sp)
 }
 
+/// Graph width (px) — horizontal bars only (vertical bars fill the width).
+fn graph_width_row(handle: &BarHandle, i: usize) -> GtkBox {
+    let sp = SpinButton::with_range(16.0, 400.0, 4.0);
+    sp.set_width_chars(5);
+    sp.set_value(handle.cfg.borrow().panel[i].graph_width.unwrap_or(80) as f64);
+    sp.set_tooltip_text(Some("Fixed graph width on a horizontal bar"));
+    let h = handle.clone();
+    sp.connect_value_changed(move |s| {
+        if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+            p.graph_width = Some(s.value() as i32);
+        }
+        h.apply();
+    });
+    row("Graph width (px)", &sp)
+}
+
 /// Generic detail for the metric panels: interval, label toggle, plus a graph
 /// toggle + height + window for the types that actually draw a history graph.
 fn generic_detail(handle: &BarHandle, i: usize, kind: &str) -> GtkBox {
@@ -1739,6 +1773,9 @@ fn generic_detail(handle: &BarHandle, i: usize, kind: &str) -> GtkBox {
         page.append(&g);
         page.append(&graph_height_row(handle, i, 24)); // GRAPH_H default
         page.append(&graph_window_row(handle, i));
+        if handle.cfg.borrow().bar.edge.is_horizontal() {
+            page.append(&graph_width_row(handle, i));
+        }
     }
     page
 }
@@ -1792,6 +1829,7 @@ fn panel_detail(handle: &BarHandle, i: usize) -> GtkBox {
         "top" => {
             let page = page_box();
             page.append(&interval_row(handle, i));
+            page.append(&show_label_check(handle, i));
             let n = SpinButton::with_range(1.0, 20.0, 1.0);
             n.set_width_chars(5);
             n.set_value(handle.cfg.borrow().panel[i].count.unwrap_or(5) as f64);
@@ -1803,6 +1841,23 @@ fn panel_detail(handle: &BarHandle, i: usize) -> GtkBox {
                 h.apply();
             });
             page.append(&row("Processes shown", &n));
+
+            // Horizontal bars only: wrap the entries into columns of this many
+            // (a single row otherwise). Pointless on a vertical bar — it's
+            // already a column — so only show it there.
+            if handle.cfg.borrow().bar.edge.is_horizontal() {
+                let c = SpinButton::with_range(1.0, 20.0, 1.0);
+                c.set_width_chars(5);
+                c.set_value(handle.cfg.borrow().panel[i].columns.unwrap_or(1) as f64);
+                let h = handle.clone();
+                c.connect_value_changed(move |s| {
+                    if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                        p.columns = Some(s.value() as i32);
+                    }
+                    h.apply();
+                });
+                page.append(&row("Items per column", &c));
+            }
             page
         }
         "net" => {
@@ -2003,6 +2058,11 @@ fn save_config(handle: &BarHandle) -> std::io::Result<std::path::PathBuf> {
     let path = crate::config::config_path();
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
+    }
+    // Back up the previous config first, so a save can never be a one-way loss
+    // (e.g. saving over a config the bar had degraded to defaults).
+    if path.exists() {
+        let _ = std::fs::copy(&path, crate::config::backup_path());
     }
     let body = toml::to_string_pretty(&*handle.cfg.borrow()).map_err(std::io::Error::other)?;
     std::fs::write(&path, body)?;

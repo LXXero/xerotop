@@ -107,6 +107,10 @@ pub struct BarConfig {
     pub graph_gamma: f64,
     /// Background opacity 0.0 (transparent) .. 1.0 (opaque).
     pub opacity: f64,
+    /// Reverse the panel order. Most useful on a horizontal bar, where the
+    /// clock/header conventionally belongs at the end rather than the start.
+    #[serde(default)]
+    pub reverse: bool,
 }
 
 impl Default for BarConfig {
@@ -123,6 +127,7 @@ impl Default for BarConfig {
             meter_thickness: 7,
             graph_gamma: 1.0,
             opacity: 0.88,
+            reverse: false,
         }
     }
 }
@@ -283,6 +288,11 @@ pub struct PanelConfig {
     /// built-in ~60s.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graph_window: Option<f64>,
+    /// Override the graph's width (px). Only used on a horizontal bar, where
+    /// graphs are fixed-width (so fluctuating value text can't resize the
+    /// panel); a vertical bar always fills the width. None = a sensible default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_width: Option<i32>,
     /// top panel only: how many processes to list. None = default (5).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<usize>,
@@ -399,6 +409,7 @@ fn default_panels() -> Vec<PanelConfig> {
         show_label: true,
         graph_height: None,
         graph_window: None,
+        graph_width: None,
         count: None,
         show_load: false,
         scroll_step: None,
@@ -471,11 +482,22 @@ pub fn config_path() -> PathBuf {
 }
 
 /// Load config, writing a starter file on first run. Never panics.
+/// Sibling backup path for the config (`config.toml.bak`).
+pub fn backup_path() -> PathBuf {
+    let mut p = config_path().into_os_string();
+    p.push(".bak");
+    PathBuf::from(p)
+}
+
 pub fn load() -> Config {
     let path = config_path();
     match fs::read_to_string(&path) {
         Ok(s) => toml::from_str(&s).unwrap_or_else(|e| {
             eprintln!("xerotop: config parse error ({e}); using defaults");
+            // Preserve the unparseable file before anything (a later Save) can
+            // clobber it: the defaults have a reduced panel set, so saving over
+            // a user's config would silently drop their added panels.
+            let _ = fs::copy(&path, backup_path());
             Config::default()
         }),
         Err(_) => {
@@ -504,6 +526,7 @@ length = "full"     # "full"/"max" to fill the edge, or a pixel count (e.g. 600)
 align = "center"    # start | center | end  (only used when length is fixed)
 layer = "top"       # top | bottom | background | overlay  (bottom = windows over bar)
 monitor = 0
+reverse = false     # reverse panel order (handy on horizontal bars: clock at the end)
 smooth = true       # continuous graph scrolling on AC; false = stepped (less battery)
 smooth_battery = false  # smooth scrolling while on battery (default off = no per-frame wakeups)
 graph_gamma = 1.0   # autoscaled-graph spikiness; 1.0 = ewwii, >1 sharper peaks
@@ -537,6 +560,9 @@ date_format = "%a %d %b"
 type = "cpu"
 interval = 2
 graph = true
+# graph_height = 24  # px (optional)
+# graph_window = 60  # seconds of history shown (optional)
+# graph_width  = 80  # px, horizontal bars only (fixed so values can't resize it)
 
 [[panel]]
 type = "memory"
@@ -578,6 +604,9 @@ interval = 1
 [[panel]]
 type = "top"
 interval = 3
+# count = 5          # processes shown
+# columns = 1        # horizontal bars: items per column before wrapping
+# show_label = true  # the "TOP" header
 
 [[panel]]
 type = "tasks"      # open windows via wlr-foreign-toplevel

@@ -89,6 +89,17 @@ pub fn set_tray(columns: i32, icon_size: i32) {
 }
 
 thread_local! {
+    /// Whether the bar is on a horizontal edge (top/bottom). Panels that lay
+    /// children out along the bar (tasks, tray) flip orientation accordingly.
+    static BAR_HORIZONTAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Tell panels the bar's orientation. Call before (re)building panels.
+pub fn set_horizontal(horizontal: bool) {
+    BAR_HORIZONTAL.with(|c| c.set(horizontal));
+}
+
+thread_local! {
     /// Header icon buttons (4 slots). Empty = default power-menu + lock.
     static HEADER_CFG: RefCell<Vec<HeaderButton>> = const { RefCell::new(Vec::new()) };
 }
@@ -168,6 +179,10 @@ thread_local! {
     /// Per-panel graph time-window override (seconds). Set in `build()` from the
     /// panel's `graph_window`; `0.0` = use the Graph's built-in WINDOW_SECS.
     static GRAPH_WIN_OVERRIDE: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
+
+    /// Per-panel graph width override (px), used only on a horizontal bar. Set
+    /// in `build()` from `graph_width`; `None` = the default horizontal width.
+    static GRAPH_W_OVERRIDE: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
 
     /// Tasks-panel layout, set in `build()` from the panel config:
     /// `(icons_only, columns, icon_size)`. Read once by `taskbar_panel()`.
@@ -251,6 +266,25 @@ fn bar_h() -> i32 {
     METER_H.with(|c| c.get())
 }
 
+/// A fixed level-meter length (px) for horizontal bars.
+const METER_LEN_H: i32 = 56;
+
+/// Default graph width (px) on a horizontal bar (overridable per panel).
+const GRAPH_W_H: i32 = 80;
+
+/// Size a level-meter `Bar`/usage area along the bar's long axis. On a vertical
+/// bar it fills the (narrow) width via hexpand; on a horizontal bar hexpand
+/// would stretch it to the whole monitor width, so pin a fixed length instead.
+fn meter_fill(area: &gtk::DrawingArea) {
+    if BAR_HORIZONTAL.with(|c| c.get()) {
+        area.set_hexpand(false);
+        area.set_content_width(METER_LEN_H);
+    } else {
+        area.set_hexpand(true);
+        area.set_content_width(0);
+    }
+}
+
 /// Toggle per-frame scroll animation on every live graph (no rebuild).
 pub fn set_all_smooth(on: bool) {
     SMOOTH_GRAPHS.with(|v| {
@@ -266,6 +300,7 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
     SHOW_LABEL.with(|c| c.set(cfg.show_label));
     GRAPH_H_OVERRIDE.with(|c| c.set(cfg.graph_height.filter(|&h| h > 0)));
     GRAPH_WIN_OVERRIDE.with(|c| c.set(cfg.graph_window.filter(|&w| w > 0.0).unwrap_or(0.0)));
+    GRAPH_W_OVERRIDE.with(|c| c.set(cfg.graph_width.filter(|&w| w > 0)));
     TASK_CFG.with(|c| {
         c.set((
             cfg.icons_only,
@@ -310,7 +345,11 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
         "keyboard" => Some(kbd_panel(iv)),
         "weather" | "wx" => Some(weather_panel()),
         "mail" => Some(mail_panel()),
-        "top" => Some(top_panel(iv, cfg.count.unwrap_or(5).clamp(1, 20))),
+        "top" => Some(top_panel(
+            iv,
+            cfg.count.unwrap_or(5).clamp(1, 20),
+            cfg.columns.unwrap_or(1).max(1),
+        )),
         "gpu" => Some(gpu_panel(iv, cfg.graph, smooth)),
         "disk" => Some(disk_panel(iv, cfg.graph, smooth)),
         "net" => Some(net_panel(
@@ -451,14 +490,20 @@ fn graph_widget(
             GraphScale::Fixed(_) => 1.0,
             GraphScale::DynamicPeak | GraphScale::DynamicRange => AUTOSCALE_GAMMA.with(|c| c.get()),
         };
-        // Width 0 + hexpand: fill the bar's width instead of imposing a fixed
-        // floor, so reducing bar thickness actually shrinks the graphs. The draw
-        // func already adapts to whatever width it's allocated. Height is the
-        // panel-type default `h` unless the config overrides it.
+        // Vertical bar: width 0 + hexpand fills the bar width (so reducing
+        // thickness shrinks the graphs; the draw func adapts to any width).
+        // Horizontal bar: a fixed width instead, so fluctuating value text can't
+        // resize the panel. Height is the panel-type default `h` unless overridden.
         let h = GRAPH_H_OVERRIDE.with(|c| c.get()).unwrap_or(h);
         let win = GRAPH_WIN_OVERRIDE.with(|c| c.get());
         let g = Graph::new(0, h, scale, gamma, specs, iv, smooth, 0.0, win);
-        g.area.set_hexpand(true);
+        if BAR_HORIZONTAL.with(|c| c.get()) {
+            g.area
+                .set_content_width(GRAPH_W_OVERRIDE.with(|c| c.get()).unwrap_or(GRAPH_W_H));
+            g.area.set_hexpand(false);
+        } else {
+            g.area.set_hexpand(true);
+        }
         root.append(&g.area);
         SMOOTH_GRAPHS.with(|v| v.borrow_mut().push(g.clone()));
         g
@@ -555,7 +600,7 @@ where
     icon.set_size_request(ICON_W, -1);
     icon.set_xalign(0.5);
     let bar = Bar::new(0, bar_h(), 100.0, rgba);
-    bar.area.set_hexpand(true);
+    meter_fill(&bar.area);
     bar.area.set_valign(gtk::Align::Center);
     let val = Label::new(Some("--"));
     val.add_css_class("value");
@@ -1108,7 +1153,7 @@ fn disk_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     // glance instead of only as "38G/1023G".
     let usage_row = GtkBox::new(Orientation::Horizontal, 6);
     let usage_bar = Bar::new(0, bar_h(), 100.0, pal().cyan);
-    usage_bar.area.set_hexpand(true);
+    meter_fill(&usage_bar.area);
     usage_bar.area.set_valign(gtk::Align::Center);
     let usage = sub();
     usage.set_hexpand(false);
@@ -1613,6 +1658,13 @@ fn tray_panel() -> Panel {
     let root = panel_box();
     root.add_css_class("tray");
     let flow = gtk::FlowBox::new();
+    // Lines run along the bar's short axis (see taskbar_panel), so icons fill
+    // the thickness then extend along the bar's length.
+    flow.set_orientation(if BAR_HORIZONTAL.with(|c| c.get()) {
+        Orientation::Vertical
+    } else {
+        Orientation::Horizontal
+    });
     flow.set_selection_mode(gtk::SelectionMode::None);
     flow.set_min_children_per_line(1);
     flow.set_max_children_per_line(TRAY_CFG.with(|c| c.get().0) as u32);
@@ -1778,20 +1830,38 @@ fn taskbar_host() -> TaskbarHost {
 /// icons, with the title moved to a tooltip.
 fn taskbar_panel() -> Panel {
     let (icons_only, columns, icon_size) = TASK_CFG.with(|c| c.get());
+    let horizontal = BAR_HORIZONTAL.with(|c| c.get());
 
     let root = panel_box();
     root.add_css_class("taskbar");
+    // On a horizontal bar a header above a list of windows just wastes the
+    // thickness, so sit it inline (to the left of the entries) instead.
+    if horizontal {
+        root.set_orientation(Orientation::Horizontal);
+        root.set_spacing(6);
+    }
     if SHOW_LABEL.with(|c| c.get()) {
         let head = Label::new(Some("TASKS"));
         head.add_css_class("label");
         head.set_xalign(0.0);
+        if horizontal {
+            head.set_valign(gtk::Align::Center);
+        }
         root.append(&head);
     }
 
     // The container holding the per-window buttons: a wrapping FlowBox for the
-    // icon grid, or a plain vertical box for the icon+title rows.
+    // icon grid, or a plain box of icon+title rows. Both run along the bar's
+    // long axis — windows stack down a vertical bar, march across a horizontal
+    // one. The FlowBox lines run along the short axis, so it wraps the opposite
+    // way (icons fill the bar's thickness, then extend along its length).
     let grid = icons_only.then(|| {
         let flow = gtk::FlowBox::new();
+        flow.set_orientation(if horizontal {
+            Orientation::Vertical
+        } else {
+            Orientation::Horizontal
+        });
         flow.set_selection_mode(gtk::SelectionMode::None);
         flow.set_min_children_per_line(1);
         flow.set_max_children_per_line(columns as u32);
@@ -1800,7 +1870,12 @@ fn taskbar_panel() -> Panel {
         flow
     });
     let list = (!icons_only).then(|| {
-        let b = GtkBox::new(Orientation::Vertical, 1);
+        let dir = if horizontal {
+            Orientation::Horizontal
+        } else {
+            Orientation::Vertical
+        };
+        let b = GtkBox::new(dir, 1);
         root.append(&b);
         b
     });
@@ -1864,10 +1939,17 @@ fn taskbar_panel() -> Panel {
                 };
                 let lbl = Label::new(Some(&text));
                 lbl.set_xalign(0.0);
-                lbl.set_hexpand(true);
                 lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
-                lbl.set_width_chars(1);
-                lbl.set_max_width_chars(1); // ellipsize within the bar width
+                if horizontal {
+                    // Side-by-side along a horizontal bar: let each task size to
+                    // its title, capped so one long title can't dominate.
+                    lbl.set_max_width_chars(20);
+                } else {
+                    // Stacked down a narrow vertical bar: ellipsize to the width.
+                    lbl.set_hexpand(true);
+                    lbl.set_width_chars(1);
+                    lbl.set_max_width_chars(1);
+                }
                 row.append(&lbl);
                 btn.set_child(Some(&row));
             }
@@ -2153,7 +2235,7 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
                 RowKind::Fan => {
                     let max = if fan_max > 0.0 { fan_max } else { FAN_MAX_RPM };
                     let bar = Bar::new(0, bar_h(), max, color);
-                    bar.area.set_hexpand(true);
+                    meter_fill(&bar.area);
                     bar.area.set_valign(gtk::Align::Center);
                     row.append(&bar.area);
                     row.append(&val);
@@ -2166,7 +2248,7 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
                 }
                 _ => {
                     let bar = Bar::new(0, bar_h(), 100.0, color);
-                    bar.area.set_hexpand(true);
+                    meter_fill(&bar.area);
                     bar.area.set_valign(gtk::Align::Center);
                     row.append(&bar.area);
                     row.append(&val);
@@ -2251,29 +2333,71 @@ fn temp_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
 }
 
 /// TOP: the busiest processes by instantaneous CPU %.
-fn top_panel(interval: f64, n: usize) -> Panel {
+fn top_panel(interval: f64, n: usize, cols: i32) -> Panel {
+    let horizontal = BAR_HORIZONTAL.with(|c| c.get());
     let root = panel_box();
-    let head = Label::new(Some("TOP"));
-    head.add_css_class("label");
-    head.set_xalign(0.0);
-    root.append(&head);
+    // Inline the header on a horizontal bar (see taskbar_panel).
+    if horizontal {
+        root.set_orientation(Orientation::Horizontal);
+        root.set_spacing(6);
+    }
+    if SHOW_LABEL.with(|c| c.get()) {
+        let head = Label::new(Some("TOP"));
+        head.add_css_class("label");
+        head.set_xalign(0.0);
+        if horizontal {
+            head.set_valign(gtk::Align::Center);
+        }
+        root.append(&head);
+    }
+
+    // On a horizontal bar the entries pack into explicit columns of `cols` items
+    // each (deterministic — FlowBox wrapping is at the mercy of space
+    // negotiation); the columns sit side by side. On a vertical bar it's a
+    // single top-to-bottom list (cols is ignored — see prefs).
+    let cols = cols.max(1) as usize;
+    let per_col = if horizontal { cols } else { n.max(1) };
+    let container = GtkBox::new(
+        if horizontal {
+            Orientation::Horizontal
+        } else {
+            Orientation::Vertical
+        },
+        if horizontal { 10 } else { 0 },
+    );
+    root.append(&container);
 
     let mut rows: Vec<(Label, Label)> = Vec::new();
-    for _ in 0..n {
+    let mut column: Option<GtkBox> = None;
+    for idx in 0..n {
+        // Open a new column whenever the current one is full.
+        if idx % per_col == 0 {
+            let c = GtkBox::new(Orientation::Vertical, 2);
+            container.append(&c);
+            column = Some(c);
+        }
         let row = GtkBox::new(Orientation::Horizontal, 4);
         let name = Label::new(Some(""));
         name.add_css_class("sub");
         name.set_xalign(0.0);
-        name.set_hexpand(true);
         name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        name.set_width_chars(1);
-        name.set_max_width_chars(1);
+        if horizontal {
+            // Side-by-side: size to the process name, capped.
+            name.set_max_width_chars(12);
+        } else {
+            // Stacked in a narrow bar: ellipsize to the width.
+            name.set_hexpand(true);
+            name.set_width_chars(1);
+            name.set_max_width_chars(1);
+        }
         let val = Label::new(Some(""));
         val.add_css_class("value");
         val.set_xalign(1.0);
         row.append(&name);
         row.append(&val);
-        root.append(&row);
+        if let Some(c) = &column {
+            c.append(&row);
+        }
         rows.push((name, val));
     }
 

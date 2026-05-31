@@ -40,9 +40,7 @@ pub fn class_for_instance(instance: &str) -> Option<String> {
 
 fn query(instance: &str) -> Option<String> {
     // No DISPLAY = no XWayland in this session; nothing to do.
-    if std::env::var_os("DISPLAY").is_none() {
-        return None;
-    }
+    std::env::var_os("DISPLAY")?;
     let (conn, screen_num) = x11rb::connect(None).ok()?;
     let root = conn.setup().roots.get(screen_num)?.root;
     let net_client_list = conn
