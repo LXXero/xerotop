@@ -489,53 +489,98 @@ pub fn backup_path() -> PathBuf {
     PathBuf::from(p)
 }
 
+/// Deserialize a TOML table into `T`, tolerating individual fields whose value
+/// a code change made incompatible. Build up from the `required` keys, then add
+/// each remaining key only while the result still deserializes — an
+/// incompatible key is dropped, so its field falls back to its serde default.
+/// Returns `None` only if even the required-key base can't parse.
+///
+/// This is generic: it probes the *real* struct rather than a hand-maintained
+/// field list, so adding a field needs no upkeep here.
+fn lenient<T: serde::de::DeserializeOwned>(tbl: &toml::Table, required: &[&str]) -> Option<T> {
+    let parses = |t: &toml::Table| -> bool {
+        let r: Result<T, _> = toml::Value::Table(t.clone()).try_into();
+        r.is_ok()
+    };
+    let mut acc = toml::Table::new();
+    for r in required {
+        acc.insert((*r).to_string(), tbl.get(*r)?.clone());
+    }
+    if !parses(&acc) {
+        return None; // the required keys themselves are broken — unsalvageable
+    }
+    for (k, v) in tbl {
+        if required.contains(&k.as_str()) {
+            continue;
+        }
+        let mut probe = acc.clone();
+        probe.insert(k.clone(), v.clone());
+        if parses(&probe) {
+            acc = probe;
+        }
+    }
+    let r: Result<T, _> = toml::Value::Table(acc).try_into();
+    r.ok()
+}
+
 /// Recover as much as possible from a config that failed a strict parse.
 ///
 /// serde parsing is all-or-nothing: one value whose *type* a code change made
 /// incompatible (an old saved value vs a new field type) fails the whole
 /// `Config`, which would otherwise reset the bar to the reduced default panel
-/// set — silently dropping user-added panels (cores/uptime/…). Instead, parse
-/// section-by-section and panel-by-panel, keeping everything still valid; only
-/// the genuinely-incompatible section/panel falls back to its default.
+/// set — silently dropping user-added panels (cores/uptime/…). Instead, recover
+/// each section and panel field-by-field (see `lenient`): only the genuinely
+/// incompatible *field* falls back to its default, so nothing is lost and no
+/// manual restore is needed.
 fn salvage(s: &str) -> Config {
     let mut cfg = Config::default();
     let Ok(t) = s.parse::<toml::Table>() else {
         return cfg;
     };
+    let tbl = |k: &str| match t.get(k) {
+        Some(toml::Value::Table(x)) => Some(x.clone()),
+        _ => None,
+    };
     if let Some(v) = t.get("theme").and_then(|v| v.as_str()) {
         cfg.theme = v.to_string();
     }
-    if let Some(v) = t.get("bar").cloned().and_then(|v| v.try_into().ok()) {
-        cfg.bar = v;
+    if let Some(x) = tbl("bar").and_then(|x| lenient(&x, &[])) {
+        cfg.bar = x;
     }
-    if let Some(v) = t.get("font").cloned().and_then(|v| v.try_into().ok()) {
-        cfg.font = v;
+    if let Some(x) = tbl("font").and_then(|x| lenient(&x, &[])) {
+        cfg.font = x;
     }
-    if let Some(v) = t.get("power").cloned().and_then(|v| v.try_into().ok()) {
-        cfg.power = v;
+    if let Some(x) = tbl("power").and_then(|x| lenient(&x, &[])) {
+        cfg.power = x;
     }
-    if let Some(v) = t.get("tray").cloned().and_then(|v| v.try_into().ok()) {
-        cfg.tray = v;
+    if let Some(x) = tbl("tray").and_then(|x| lenient(&x, &[])) {
+        cfg.tray = x;
     }
-    if let Some(v) = t.get("temp").cloned().and_then(|v| v.try_into().ok()) {
-        cfg.temp = v;
+    if let Some(x) = tbl("temp").and_then(|x| lenient(&x, &[])) {
+        cfg.temp = x;
     }
-    if let Some(v) = t.get("weather").cloned().and_then(|v| v.try_into().ok()) {
-        cfg.weather = v;
+    if let Some(x) = tbl("weather").and_then(|x| lenient(&x, &[])) {
+        cfg.weather = x;
     }
-    if let Some(v) = t.get("mail").cloned().and_then(|v| v.try_into().ok()) {
-        cfg.mail = v;
+    if let Some(x) = tbl("mail").and_then(|x| lenient(&x, &[])) {
+        cfg.mail = x;
     }
-    if let Some(v) = t.get("actions").cloned().and_then(|v| v.try_into().ok()) {
-        cfg.actions = v;
+    if let Some(x) = tbl("actions").and_then(|x| lenient(&x, &[])) {
+        cfg.actions = x;
     }
     if let Some(toml::Value::Array(a)) = t.get("header_button") {
         cfg.header = a.iter().filter_map(|h| h.clone().try_into().ok()).collect();
     }
-    // Keep every panel that still parses; drop only the incompatible ones (the
-    // backup retains the original). Empty recovery → leave the defaults.
+    // Recover every panel, defaulting only its incompatible fields; drop a panel
+    // only if even its `type` is unrecoverable. Empty recovery → keep defaults.
     if let Some(toml::Value::Array(a)) = t.get("panel") {
-        let kept: Vec<PanelConfig> = a.iter().filter_map(|p| p.clone().try_into().ok()).collect();
+        let kept: Vec<PanelConfig> = a
+            .iter()
+            .filter_map(|p| match p {
+                toml::Value::Table(x) => lenient(x, &["type"]),
+                _ => None,
+            })
+            .collect();
         if !kept.is_empty() {
             cfg.panel = kept;
         }
@@ -710,19 +755,30 @@ mod tests {
     }
 
     #[test]
-    fn salvage_keeps_valid_panels_when_one_is_incompatible() {
+    fn salvage_keeps_the_panel_and_defaults_only_the_bad_field() {
         // `show_load` is a bool; a string is the kind of mismatch a code change
         // (field retype/format change) introduces into an old saved config.
+        let toml = "[[panel]]\ntype = \"uptime\"\nshow_load = \"nope\"\ncount = 7\n";
+        assert!(toml::from_str::<Config>(toml).is_err()); // strict parse fails
+        let cfg = salvage(toml);
+        assert_eq!(cfg.panel.len(), 1); // panel preserved, not dropped
+        assert_eq!(cfg.panel[0].kind, "uptime");
+        assert_eq!(cfg.panel[0].count, Some(7)); // the *valid* field survives
+        assert!(!cfg.panel[0].show_load); // only the bad field falls to default
+    }
+
+    #[test]
+    fn salvage_survives_a_universal_field_retype() {
+        // The worst case: a retyped field present on *every* panel. Per-field
+        // salvage must keep all panels (defaulting just that field), not reset.
         let toml = "\
-[[panel]]\ntype = \"cpu\"\n\
-[[panel]]\ntype = \"uptime\"\nshow_load = \"nope\"\n\
-[[panel]]\ntype = \"tasks\"\n";
-        // strict parse fails on the one bad value...
+[[panel]]\ntype = \"cpu\"\nshow_label = \"x\"\n\
+[[panel]]\ntype = \"cores\"\nshow_label = \"x\"\n\
+[[panel]]\ntype = \"uptime\"\nshow_label = \"x\"\n";
         assert!(toml::from_str::<Config>(toml).is_err());
-        // ...but salvage keeps the other panels instead of resetting wholesale.
         let cfg = salvage(toml);
         let kinds: Vec<&str> = cfg.panel.iter().map(|p| p.kind.as_str()).collect();
-        assert!(kinds.contains(&"cpu") && kinds.contains(&"tasks"));
+        assert_eq!(kinds, ["cpu", "cores", "uptime"]); // all three kept
     }
 
     #[test]
