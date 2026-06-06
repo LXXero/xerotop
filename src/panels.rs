@@ -1335,7 +1335,19 @@ fn tray_image(it: &crate::tray::TrayItem) -> gtk::Image {
     if let (Some(name), Some(display)) = (&it.icon_name, gtk::gdk::Display::default()) {
         let theme = gtk::IconTheme::for_display(&display);
         if let Some(path) = &it.icon_theme_path {
-            theme.add_search_path(path);
+            // Only add each path once: add_search_path doesn't dedup, and every
+            // call invalidates the theme cache — so re-adding on each tray
+            // repaint piles up duplicate paths and forces a full directory
+            // rescan per lookup (it grew to ~9% average CPU over two days).
+            thread_local! {
+                static ADDED: RefCell<std::collections::HashSet<String>> =
+                    RefCell::new(std::collections::HashSet::new());
+            }
+            ADDED.with(|a| {
+                if a.borrow_mut().insert(path.clone()) {
+                    theme.add_search_path(path);
+                }
+            });
         }
         if theme.has_icon(name) {
             img.set_icon_name(Some(name));

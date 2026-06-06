@@ -129,6 +129,9 @@ async fn run(
     loop {
         tokio::select! {
             ev = sub.recv() => {
+                // Only push a fresh snapshot (= full tray re-render in GTK) for
+                // events that actually changed something we display.
+                let mut changed = true;
                 match ev {
                     Ok(Event::Add(addr, item)) => {
                         items.insert(addr.clone(), to_item(&addr, &item));
@@ -152,15 +155,19 @@ async fn run(
                                 }
                                 UpdateEvent::Title(t) => it.title = t.unwrap_or_default(),
                                 UpdateEvent::Menu(menu) => it.menu = menu_entries(&menu),
-                                _ => {}
+                                _ => changed = false,
                             }
+                        } else {
+                            changed = false;
                         }
                     }
                     Ok(Event::Remove(addr)) => { items.remove(&addr); }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(_) => break,
                 }
-                let _ = tx.send(snapshot(&items)).await;
+                if changed {
+                    let _ = tx.send(snapshot(&items)).await;
+                }
             }
             req = arx.recv() => {
                 match req {
