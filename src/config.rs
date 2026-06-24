@@ -276,6 +276,9 @@ pub struct PanelConfig {
     pub interval: f64,
     #[serde(default = "default_true")]
     pub graph: bool,
+    /// disk panel only: show the capacity bar + used/total text.
+    #[serde(default = "default_true")]
+    pub show_capacity: bool,
     /// Show the panel's label/value header row. Off → just the graphic (e.g. a
     /// `cores` panel under `cpu` reads as one block, no repeated "CPU" header).
     #[serde(default = "default_true")]
@@ -419,6 +422,7 @@ fn default_panels() -> Vec<PanelConfig> {
         icons_only: false,
         columns: None,
         icon_size: None,
+        show_capacity: true,
     })
     .collect()
 }

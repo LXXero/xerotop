@@ -351,7 +351,7 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
             cfg.columns.unwrap_or(1).max(1),
         )),
         "gpu" => Some(gpu_panel(iv, cfg.graph, smooth)),
-        "disk" => Some(disk_panel(iv, cfg.graph, smooth)),
+        "disk" => Some(disk_panel(iv, cfg.graph, smooth, cfg.show_capacity)),
         "net" => Some(net_panel(
             iv,
             cfg.graph,
@@ -1145,21 +1145,24 @@ fn gpu_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     }
 }
 
-fn disk_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
+fn disk_panel(interval: f64, graph: bool, smooth: bool, show_capacity: bool) -> Panel {
     let root = panel_box();
     let (row, val) = header("DISK");
     root.append(&row);
     // Usage level bar + the used/total text on one row, so capacity reads at a
     // glance instead of only as "38G/1023G".
-    let usage_row = GtkBox::new(Orientation::Horizontal, 6);
-    let usage_bar = Bar::new(0, bar_h(), 100.0, pal().cyan);
-    meter_fill(&usage_bar.area);
-    usage_bar.area.set_valign(gtk::Align::Center);
-    let usage = sub();
-    usage.set_hexpand(false);
-    usage_row.append(&usage_bar.area);
-    usage_row.append(&usage);
-    root.append(&usage_row);
+    let usage_bar = show_capacity.then(|| {
+        let usage_row = GtkBox::new(Orientation::Horizontal, 6);
+        let bar = Bar::new(0, bar_h(), 100.0, pal().cyan);
+        meter_fill(&bar.area);
+        bar.area.set_valign(gtk::Align::Center);
+        let label = sub();
+        label.set_hexpand(false);
+        usage_row.append(&bar.area);
+        usage_row.append(&label);
+        root.append(&usage_row);
+        (bar, label)
+    });
     let rd = graph_widget(
         &root,
         MINI_H,
@@ -1180,10 +1183,12 @@ fn disk_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     );
     let disk = Rc::new(RefCell::new(Disk::new()));
     let update = Box::new(move || {
-        if let Some((pct, used, total)) = disk_usage() {
-            val.set_text(&format!("{pct:.0}%"));
-            usage.set_text(&format!("{used:.0}G/{total:.0}G"));
-            usage_bar.set(pct);
+        if let Some((ref bar, ref label)) = usage_bar {
+            if let Some((pct, used, total)) = disk_usage() {
+                val.set_text(&format!("{pct:.0}%"));
+                label.set_text(&format!("{used:.0}G/{total:.0}G"));
+                bar.set(pct);
+            }
         }
         let (r, w) = disk.borrow_mut().sample();
         if let Some(g) = &rd {

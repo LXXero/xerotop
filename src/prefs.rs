@@ -931,6 +931,7 @@ fn layout_page(handle: &BarHandle) -> GtkBox {
             icons_only: false,
             columns: None,
             icon_size: None,
+            show_capacity: true,
         });
         h.apply();
         populate_panels(&h, &list_c);
@@ -1874,6 +1875,20 @@ fn panel_detail(handle: &BarHandle, i: usize) -> GtkBox {
                 h.apply();
             });
             page.append(&hr);
+            page
+        }
+        "disk" => {
+            let page = generic_detail(handle, i, "disk");
+            let cb = CheckButton::with_label("Show capacity (usage bar + used/total)");
+            cb.set_active(handle.cfg.borrow().panel[i].show_capacity);
+            let h = handle.clone();
+            cb.connect_toggled(move |c| {
+                if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                    p.show_capacity = c.is_active();
+                }
+                h.apply();
+            });
+            page.append(&cb);
             page
         }
         "uptime" => {
