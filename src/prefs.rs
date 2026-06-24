@@ -932,6 +932,7 @@ fn layout_page(handle: &BarHandle) -> GtkBox {
             columns: None,
             icon_size: None,
             show_capacity: true,
+            core: -1,
         });
         h.apply();
         populate_panels(&h, &list_c);
@@ -1889,6 +1890,21 @@ fn panel_detail(handle: &BarHandle, i: usize) -> GtkBox {
                 h.apply();
             });
             page.append(&cb);
+            page
+        }
+        "cpu" => {
+            let page = generic_detail(handle, i, "cpu");
+            let s = SpinButton::with_range(-1.0, 255.0, 1.0);
+            s.set_width_chars(5);
+            s.set_value(handle.cfg.borrow().panel[i].core as f64);
+            let h = handle.clone();
+            s.connect_value_changed(move |s| {
+                if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                    p.core = s.value() as i32;
+                }
+                h.apply();
+            });
+            page.append(&row("Core (-1 = all, 0 = CPU0, 1 = CPU1, …)", &s));
             page
         }
         "uptime" => {

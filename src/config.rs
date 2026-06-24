@@ -279,6 +279,9 @@ pub struct PanelConfig {
     /// disk panel only: show the capacity bar + used/total text.
     #[serde(default = "default_true")]
     pub show_capacity: bool,
+    /// cpu panel only: which core to sample. -1 = aggregate (all cores), 0 = CPU0.
+    #[serde(default = "default_core")]
+    pub core: i32,
     /// Show the panel's label/value header row. Off → just the graphic (e.g. a
     /// `cores` panel under `cpu` reads as one block, no repeated "CPU" header).
     #[serde(default = "default_true")]
@@ -333,6 +336,9 @@ fn default_interval() -> f64 {
 }
 fn default_true() -> bool {
     true
+}
+fn default_core() -> i32 {
+    -1
 }
 
 /// Accept either an integer or float for interval seconds.
@@ -423,6 +429,7 @@ fn default_panels() -> Vec<PanelConfig> {
         columns: None,
         icon_size: None,
         show_capacity: true,
+        core: -1,
     })
     .collect()
 }

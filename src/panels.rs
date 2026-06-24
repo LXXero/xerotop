@@ -4,7 +4,7 @@
 
 use crate::config::{Actions, HeaderButton, HeaderSlot, PanelConfig};
 use crate::metrics::{
-    Cpu, CpuCores, Disk, Net, Top, add_brightness, add_volume, battery, brightness, disk_usage,
+    CpuCores, Disk, Net, Top, add_brightness, add_volume, battery, brightness, disk_usage,
     gpu, keyboard_leds, loadavg, mem_detail, toggle_mute, uptime, volume,
 };
 use crate::widgets::{Bar, Cores, Graph, GraphScale, Rgba};
@@ -323,21 +323,35 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
             let (tf, df) = clock_fmts();
             Some(clock_panel(iv, tf, df))
         }
-        "cpu" => Some(metric_panel(
-            "CPU",
-            iv,
-            cfg.graph,
-            pal().green,
-            smooth,
-            GraphScale::DynamicRange,
-            {
-                let cpu = Rc::new(RefCell::new(Cpu::new()));
-                move || {
-                    let p = cpu.borrow_mut().sample();
-                    (format!("{p:.0}%"), p)
-                }
-            },
-        )),
+        "cpu" => {
+            let name = if cfg.core < 0 {
+                "CPU".to_string()
+            } else {
+                format!("CPU{}", cfg.core)
+            };
+            Some(metric_panel(
+                &name,
+                iv,
+                cfg.graph,
+                pal().green,
+                smooth,
+                GraphScale::DynamicRange,
+                {
+                    let cores = Rc::new(RefCell::new(CpuCores::new()));
+                    let target = cfg.core;
+                    move || {
+                        let v = cores.borrow_mut().sample();
+                        let p = if target < 0 {
+                            let n = v.len().max(1);
+                            v.iter().sum::<f64>() / n as f64
+                        } else {
+                            v.get(target as usize).copied().unwrap_or(0.0)
+                        };
+                        (format!("{p:.0}%"), p)
+                    }
+                },
+            ))
+        },
         "memory" => Some(mem_panel(iv, cfg.graph, smooth)),
         "sensors" => Some(temp_panel(iv, cfg.graph, smooth)),
         "cores" => Some(cores_panel(iv)),
