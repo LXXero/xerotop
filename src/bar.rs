@@ -215,7 +215,9 @@ impl BarHandle {
         // On AC<->battery flips, toggle smooth scrolling on the existing graphs
         // in place (no rebuild → graph history is preserved).
         let was_battery = Rc::new(Cell::new(on_battery));
+        let handle = self.clone();
         glib::timeout_add_local(Duration::from_millis(250), move || {
+            handle.relayout();
             if gen_cell.get() != generation {
                 return glib::ControlFlow::Break;
             }
@@ -271,6 +273,16 @@ pub fn build(app: &Application, cfg: Config) -> BarHandle {
         generation: Rc::new(Cell::new(0)),
     };
     handle.apply();
+    // React to monitor hotplug: re-pin the bar when outputs change.
+    if let Some(display) = gtk::gdk::Display::default() {
+        let h = handle.clone();
+        display.monitors().connect_items_changed(move |_, _, removed, added| {
+            if removed > 0 || added > 0 {
+                h.relayout();
+                h.window.present();
+            }
+        });
+    }
     install_context_menu(&handle, &root);
     window.present();
     handle
