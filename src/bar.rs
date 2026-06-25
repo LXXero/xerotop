@@ -145,7 +145,11 @@ impl BarHandle {
             self.root.set_height_request(length_px);
             self.root.set_orientation(Orientation::Vertical);
         }
-        self.window.auto_exclusive_zone_enable();
+        // Only reserve compositor space on Top/Overlay layers so Bottom and
+        // Background bars don't prevent windows from maximizing over them.
+        if matches!(cfg.bar.layer, Layer::Top | Layer::Overlay) {
+            self.window.auto_exclusive_zone_enable();
+        }
     }
 
     /// Full re-render from the current config: styling, geometry, panels and
@@ -250,17 +254,12 @@ pub fn build(app: &Application, cfg: Config) -> BarHandle {
     window.set_resizable(false);
 
     let theme_css = gtk::CssProvider::new();
-    let theme_css_for_signal = theme_css.clone();
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
             &theme_css,
             gtk::STYLE_PROVIDER_PRIORITY_USER,
         );
-        display.connect_notify_local(Some("color-scheme"), move |display, _| {
-            gtk::style_context_remove_provider_for_display(display, &theme_css_for_signal);
-            gtk::style_context_add_provider_for_display(display, &theme_css_for_signal, gtk::STYLE_PROVIDER_PRIORITY_USER);
-        });
     }
 
     // Root box lays panels along the bar's main axis (orientation set in apply).
