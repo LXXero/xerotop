@@ -82,7 +82,14 @@ impl BarHandle {
         if let Some(v) = cfg.font.large {
             eff.font_large = v;
         }
-        self.theme_css.load_from_data(&eff.css(cfg.bar.opacity));
+        self.theme_css.load_from_data(&eff.css(cfg.bar.opacity, cfg.bar.corner_radius, cfg.bar.corner_mode, cfg.bar.edge));
+        // Clip children to the rounded bar corners (must be done programmatically
+        // — GTK4 CSS has no "overflow" property).
+        self.root.set_overflow(if cfg.bar.corner_radius > 0 {
+            gtk::Overflow::Hidden
+        } else {
+            gtk::Overflow::Visible
+        });
     }
 
     /// Apply window geometry: monitor, stacking layer, edge/anchors, thickness,

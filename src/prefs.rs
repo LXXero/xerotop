@@ -5,7 +5,7 @@
 
 use crate::bar::BarHandle;
 use crate::config::{
-    Align, BarLength, Edge, HeaderButton, HeaderSlot, Layer, PanelConfig, TempSensor,
+    Align, BarLength, CornerMode, Edge, HeaderButton, HeaderSlot, Layer, PanelConfig, TempSensor,
 };
 use crate::theme::{Theme, themes_dir};
 use gtk::gdk::RGBA;
@@ -356,6 +356,32 @@ fn general_page(handle: &BarHandle) -> GtkBox {
         h.apply();
     });
     page.append(&row("Meter bar thickness (px)", &meter_h));
+
+    // Corner radius
+    let corner_r = SpinButton::with_range(0.0, 30.0, 1.0);
+    corner_r.set_value(cfg.bar.corner_radius as f64);
+    let h = handle.clone();
+    corner_r.connect_value_changed(move |s| {
+        h.cfg.borrow_mut().bar.corner_radius = s.value() as i32;
+        h.restyle();
+    });
+    page.append(&row("Corner radius (px)", &corner_r));
+
+    // Corner mode
+    let corner_mode = DropDown::from_strings(&["uniform", "edge aware"]);
+    corner_mode.set_selected(match cfg.bar.corner_mode {
+        CornerMode::Uniform => 0,
+        CornerMode::EdgeAware => 1,
+    });
+    let h = handle.clone();
+    corner_mode.connect_selected_notify(move |d| {
+        h.cfg.borrow_mut().bar.corner_mode = match d.selected() {
+            1 => CornerMode::EdgeAware,
+            _ => CornerMode::Uniform,
+        };
+        h.restyle();
+    });
+    page.append(&row("Corner mode", &corner_mode));
 
     // Smooth scroll — separate switches for AC vs battery (battery off = no
     // per-frame wakeups). The bar rebuilds on AC<->battery to apply the change.

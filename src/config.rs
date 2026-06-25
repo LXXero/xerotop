@@ -23,6 +23,16 @@ impl Edge {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CornerMode {
+    /// Same corner radius on all four corners.
+    #[default]
+    Uniform,
+    /// Only round the corners that face away from the screen edge.
+    EdgeAware,
+}
+
 /// The bar's length along its long axis (height for vertical bars, width for
 /// horizontal): either stretched to fill the monitor edge, or a fixed pixel
 /// count. In TOML: `length = "full"` (or "max") or `length = 600`.
@@ -111,6 +121,11 @@ pub struct BarConfig {
     /// clock/header conventionally belongs at the end rather than the start.
     #[serde(default)]
     pub reverse: bool,
+    /// Corner radius in px for the bar background. 0 = square corners.
+    pub corner_radius: i32,
+    /// Whether to round all four corners uniformly, or only the outer corners
+    /// (away from the screen edge).
+    pub corner_mode: CornerMode,
 }
 
 impl Default for BarConfig {
@@ -128,6 +143,8 @@ impl Default for BarConfig {
             graph_gamma: 1.0,
             opacity: 0.88,
             reverse: false,
+            corner_radius: 0,
+            corner_mode: CornerMode::Uniform,
         }
     }
 }
@@ -668,6 +685,8 @@ smooth = true       # continuous graph scrolling on AC; false = stepped (less ba
 smooth_battery = false  # smooth scrolling while on battery (default off = no per-frame wakeups)
 graph_gamma = 1.0   # autoscaled-graph spikiness; 1.0 = ewwii, >1 sharper peaks
 opacity = 0.88      # background opacity: 0.0 transparent .. 1.0 opaque
+corner_radius = 0   # px; 0 = square corners
+corner_mode = "uniform"  # uniform | edge_aware  (edge_aware = outer corners only)
 
 [power]
 # On battery, multiply every panel's update interval by this (saves wakeups).

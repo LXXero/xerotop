@@ -4,7 +4,7 @@
 //! `~/.config/xerotop/themes/<name>.toml`; the built-in default reproduces the
 //! original dark look.
 
-use crate::config::{HeaderButton, TempSensor};
+use crate::config::{CornerMode, Edge, HeaderButton, TempSensor};
 use crate::widgets::Rgba;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -126,7 +126,7 @@ impl Theme {
     /// Generate the full stylesheet. `opacity` (from config) sets the bar's
     /// background alpha. Structural rules (padding, sizes) are constant; colors
     /// and the font come from the theme.
-    pub fn css(&self, opacity: f64) -> String {
+    pub fn css(&self, opacity: f64, corner_radius: i32, corner_mode: CornerMode, edge: Edge) -> String {
         let (br, bg_, bb) = parse_hex(&self.background);
         let bar_bg = format!("rgba({br},{bg_},{bb},{:.3})", opacity.clamp(0.0, 1.0));
         let icon = lighten(&self.label, 0.12);
@@ -141,6 +141,17 @@ impl Theme {
         let font = sanitize_font(&self.font_family);
         let (gr, gg, gb) = parse_hex(&self.graph_background);
         let graph_bg = format!("rgba({gr},{gg},{gb},{:.3})", self.graph_background_opacity.clamp(0.0, 1.0));
+        let cr = corner_radius.max(0);
+        let (tl, tr, bl, br) = if cr == 0 || corner_mode == CornerMode::Uniform {
+            (cr, cr, cr, cr)
+        } else {
+            match edge {
+                Edge::Left => (0, cr, 0, cr),
+                Edge::Right => (cr, 0, cr, 0),
+                Edge::Top => (0, 0, cr, cr),
+                Edge::Bottom => (cr, cr, 0, 0),
+            }
+        };
         format!(
             r#"
 /* The bar window must be transparent, or our semi-transparent .bar fill
@@ -148,7 +159,7 @@ impl Theme {
    desktop showing through. Scoped to .xerotop so the prefs window (same display,
    shares this provider) stays opaque. */
 window.xerotop {{ background-color: transparent; }}
-.xerotop .bar {{ font-family: "{font}", monospace; font-size: {normal}px; background-color: {bar_bg}; padding: 6px; }}
+.xerotop .bar {{ font-family: "{font}", monospace; font-size: {normal}px; background-color: {bar_bg}; padding: 6px; border-top-left-radius: {tl}px; border-top-right-radius: {tr}px; border-bottom-left-radius: {bl}px; border-bottom-right-radius: {br}px; }}
 .xerotop .panel {{ padding: 0 4px; }}
 .xerotop .meter {{ padding: 1px 4px; }}
 .xerotop .rule {{ background-color: rgba(255,255,255,0.12); min-height: 1px; min-width: 1px; margin: 2px 0; }}
@@ -288,7 +299,7 @@ mod tests {
 
     #[test]
     fn css_is_scoped_and_embeds_opacity_font_sizes() {
-        let css = Theme::default().css(0.5);
+        let css = Theme::default().css(0.5, 0, CornerMode::Uniform, Edge::Right);
         assert!(
             css.contains("window.xerotop"),
             "transparent rule must be scoped"
@@ -306,7 +317,7 @@ mod tests {
             ..Theme::default()
         };
         assert!(
-            t.css(1.0).contains("#808080"),
+            t.css(1.0, 0, CornerMode::Uniform, Edge::Right).contains("#808080"),
             "bad color normalized to grey"
         );
     }
