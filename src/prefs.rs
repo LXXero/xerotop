@@ -2105,9 +2105,8 @@ fn ensure_prefs_css() {
     provider.load_from_data(
         ".panel-master, .panel-master:backdrop {\
            background-color: rgba(255,255,255,0.045);\
-           border-right: 1px solid rgba(255,255,255,0.09); }\
-         .panel-idx { font-family: monospace; color: rgba(255,255,255,0.45); }\
-         .drag-handle { color: rgba(255,255,255,0.30); }",
+           border-right: 1px solid rgba(128,128,128,0.15); }\
+         .panel-idx { font-family: monospace; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
