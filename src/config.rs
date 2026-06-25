@@ -296,6 +296,9 @@ pub struct PanelConfig {
     /// disk panel only: show the capacity bar + used/total text.
     #[serde(default = "default_true")]
     pub show_capacity: bool,
+    /// disk panel only: show cumulative read/write bytes since start.
+    #[serde(default)]
+    pub show_disk_total: bool,
     /// cpu panel only: which core to sample. -1 = aggregate (all cores), 0 = CPU0.
     #[serde(default = "default_core")]
     pub core: i32,
@@ -446,6 +449,7 @@ fn default_panels() -> Vec<PanelConfig> {
         columns: None,
         icon_size: None,
         show_capacity: true,
+        show_disk_total: false,
         core: -1,
     })
     .collect()

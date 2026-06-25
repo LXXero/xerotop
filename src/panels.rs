@@ -365,7 +365,7 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
             cfg.columns.unwrap_or(1).max(1),
         )),
         "gpu" => Some(gpu_panel(iv, cfg.graph, smooth)),
-        "disk" => Some(disk_panel(iv, cfg.graph, smooth, cfg.show_capacity)),
+        "disk" => Some(disk_panel(iv, cfg.graph, smooth, cfg.show_capacity, cfg.show_disk_total)),
         "net" => Some(net_panel(
             iv,
             cfg.graph,
@@ -1159,7 +1159,22 @@ fn gpu_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     }
 }
 
-fn disk_panel(interval: f64, graph: bool, smooth: bool, show_capacity: bool) -> Panel {
+fn fmt_rate(kb_s: f64) -> String {
+    let b = kb_s * 1024.0;
+    if b < 1024.0 {
+        format!("{:.0}", b)
+    } else if b < 20480.0 {
+        format!("{:.1}K", b / 1024.0)
+    } else if b < 1_048_576.0 {
+        format!("{:.0}K", b / 1024.0)
+    } else if b < 20_971_520.0 {
+        format!("{:.1}M", b / 1_048_576.0)
+    } else {
+        format!("{:.0}M", b / 1_048_576.0)
+    }
+}
+
+fn disk_panel(interval: f64, graph: bool, smooth: bool, show_capacity: bool, show_disk_total: bool) -> Panel {
     let root = panel_box();
     let (row, val) = header("DISK");
     root.append(&row);
@@ -1198,6 +1213,12 @@ fn disk_panel(interval: f64, graph: bool, smooth: bool, show_capacity: bool) -> 
         smooth,
         graph,
     );
+    let total_row = show_disk_total.then(|| {
+        let l = sub();
+        l.set_hexpand(false);
+        root.append(&l);
+        l
+    });
     let disk = Rc::new(RefCell::new(Disk::new()));
     let update = Box::new(move || {
         if let Some((ref bar, ref label)) = usage_bar {
@@ -1208,6 +1229,9 @@ fn disk_panel(interval: f64, graph: bool, smooth: bool, show_capacity: bool) -> 
             }
         }
         let (r, w) = disk.borrow_mut().sample();
+        if let Some(ref l) = total_row {
+            l.set_text(&format!("R:{} W:{}", fmt_rate(r), fmt_rate(w)));
+        }
         if let Some(g) = &rd {
             g.push(&[r]);
         }

@@ -1095,6 +1095,7 @@ fn layout_page(handle: &BarHandle) -> GtkBox {
             columns: None,
             icon_size: None,
             show_capacity: true,
+            show_disk_total: false,
             core: -1,
         });
         h.apply();
@@ -2049,6 +2050,16 @@ fn panel_detail(handle: &BarHandle, i: usize) -> GtkBox {
             cb.connect_toggled(move |c| {
                 if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
                     p.show_capacity = c.is_active();
+                }
+                h.apply();
+            });
+            page.append(&cb);
+            let cb = CheckButton::with_label("Show R/W rate");
+            cb.set_active(handle.cfg.borrow().panel[i].show_disk_total);
+            let h = handle.clone();
+            cb.connect_toggled(move |c| {
+                if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                    p.show_disk_total = c.is_active();
                 }
                 h.apply();
             });

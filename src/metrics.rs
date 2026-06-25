@@ -620,7 +620,7 @@ impl Net {
 /// Disk throughput in KB/s, preferring physical whole-disk block devices and
 /// falling back to all whole disks when running in a virtualized/container view.
 pub struct Disk {
-    prev: (u64, u64), // (sectors read, sectors written)
+    prev: (u64, u64),
     at: Instant,
 }
 
