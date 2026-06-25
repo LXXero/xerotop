@@ -6,40 +6,22 @@ use std::time::Duration;
 
 use crate::bar::BarHandle;
 
-/// Initialise both the GNOME and KDE colour-scheme listeners.
+/// Initialise colour-scheme listener based on the desktop environment.
 pub fn init(handle: &BarHandle) {
-    // GNOME path: poll org.gnome.desktop.interface color-scheme via GSettings.
-    // GSettings signal callbacks require Send+Sync (which BarHandle's Rc isn't),
-    // so we poll the value every 2 seconds from a main-thread timer instead.
-    gnome_poll(handle);
-
-    // KDE path: watch ~/.config/kdeglobals for writes and parse the active
-    // ColorScheme name from the [General] section.
-    if let Some(path) = kdeglobals_path() {
-        let (tx, rx) = async_channel::unbounded::<PathBuf>();
-
-        // Background thread: watch for file modifications and debounce.
-        std::thread::spawn(move || watch_kdeglobals(path, tx));
-
-        // Main-thread receiver: switch theme when notified.
-        let h = handle.clone();
-        glib::spawn_future_local(async move {
-            while let Ok(path) = rx.recv().await {
-                if !h.cfg.borrow().theme_switch.auto {
-                    continue;
-                }
-                if let Some(name) = read_kde_color_scheme(&path) {
-                    apply(&h, classify(&name));
-                }
-            }
-        });
+    let de = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+    if de.to_uppercase().contains("KDE") {
+        start_kde_watcher(handle);
+    } else {
+        // Fallback: GNOME, Budgie, Cinnamon, or any other DE that writes
+        // org.gnome.desktop.interface color-scheme.
+        start_gnome_poller(handle);
     }
 }
 
 /// Poll GSettings for the colour-scheme key every 2 seconds.
 /// We can't use the "changed" signal because GSettings callbacks need Send+Sync,
 /// and BarHandle contains Rc (neither Send nor Sync).
-fn gnome_poll(handle: &BarHandle) {
+fn start_gnome_poller(handle: &BarHandle) {
     let h = handle.clone();
     let mut last: String = String::new();
     glib::timeout_add_local(Duration::from_secs(2), move || {
@@ -55,37 +37,73 @@ fn gnome_poll(handle: &BarHandle) {
     });
 }
 
+/// Watch ~/.config/kdedefaults/kdeglobals for writes and switch theme on change.
+/// Watches the parent directory to survive atomic renames (KDE writes via
+/// temp-file + rename, which changes the inode).
+fn start_kde_watcher(handle: &BarHandle) {
+    if let Some(target) = kdeglobals_path() {
+        let dir = target.parent().unwrap_or(&target).to_path_buf();
+        let filename = target
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let (tx, rx) = async_channel::unbounded::<PathBuf>();
+
+        std::thread::spawn(move || watch_kdeglobals_dir(dir, filename, target, tx));
+
+        let h = handle.clone();
+        glib::spawn_future_local(async move {
+            while let Ok(target) = rx.recv().await {
+                if !h.cfg.borrow().theme_switch.auto {
+                    continue;
+                }
+                if let Some(name) = read_kde_color_scheme(&target) {
+                    apply(&h, classify(&name));
+                }
+            }
+        });
+    }
+}
+
 fn kdeglobals_path() -> Option<PathBuf> {
     let base = std::env::var("XDG_CONFIG_HOME")
         .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
-    Some(PathBuf::from(base).join("kdeglobals"))
+    Some(PathBuf::from(base).join("kdedefaults/kdeglobals"))
 }
 
-fn watch_kdeglobals(path: PathBuf, tx: async_channel::Sender<PathBuf>) {
+/// Watch a directory for changes to a specific filename, using inotify-on-dir
+/// to survive atomic renames.
+fn watch_kdeglobals_dir(
+    dir: PathBuf,
+    filename: String,
+    target: PathBuf,
+    tx: async_channel::Sender<PathBuf>,
+) {
     let (notify_tx, notify_rx) = std::sync::mpsc::channel::<notify::Result<notify::Event>>();
     let mut watcher = match notify::RecommendedWatcher::new(notify_tx, notify::Config::default()) {
         Ok(w) => w,
         Err(_) => return,
     };
-    if watcher
-        .watch(&path, notify::RecursiveMode::NonRecursive)
-        .is_err()
-    {
+    if watcher.watch(&dir, notify::RecursiveMode::NonRecursive).is_err() {
         return;
     }
 
     loop {
-        // Wait for any modify event.
+        // Wait for an event on the target file.
         loop {
             match notify_rx.recv_timeout(Duration::from_secs(10)) {
-                Ok(Ok(e)) if matches!(e.kind, notify::EventKind::Modify(_)) => break,
+                Ok(Ok(e))
+                    if matches!(e.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_))
+                        && e.paths.iter().any(|p| p.ends_with(&filename)) =>
+                {
+                    break;
+                }
                 Ok(_) => continue,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(_) => return,
             }
         }
         // Debounce: KDE writes kdeglobals in bursts during a theme switch.
-        // Keep extending the deadline as long as new events keep arriving.
         let mut deadline = std::time::Instant::now() + Duration::from_millis(200);
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -93,14 +111,17 @@ fn watch_kdeglobals(path: PathBuf, tx: async_channel::Sender<PathBuf>) {
                 break;
             }
             match notify_rx.recv_timeout(remaining) {
-                Ok(Ok(e)) if matches!(e.kind, notify::EventKind::Modify(_)) => {
+                Ok(Ok(e))
+                    if matches!(e.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_))
+                        && e.paths.iter().any(|p| p.ends_with(&filename)) =>
+                {
                     deadline = std::time::Instant::now() + Duration::from_millis(200);
                     continue;
                 }
                 _ => break,
             }
         }
-        let _ = tx.send_blocking(path.clone());
+        let _ = tx.send_blocking(target.clone());
     }
 }
 
