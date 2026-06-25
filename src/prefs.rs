@@ -326,7 +326,7 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     opacity.set_value(cfg.bar.opacity);
     opacity.set_hexpand(true);
     opacity.set_draw_value(true);
-    opacity.set_size_request(180, -1);
+    opacity.set_size_request(180, 36);
     let h = handle.clone();
     opacity.connect_value_changed(move |s| {
         h.cfg.borrow_mut().bar.opacity = s.value();
@@ -339,7 +339,7 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     gamma.set_value(cfg.bar.graph_gamma);
     gamma.set_hexpand(true);
     gamma.set_draw_value(true);
-    gamma.set_size_request(180, -1);
+    gamma.set_size_request(180, 36);
     let h = handle.clone();
     gamma.connect_value_changed(move |s| {
         h.cfg.borrow_mut().bar.graph_gamma = s.value();
@@ -846,7 +846,7 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
     gb_opacity.set_value(handle.theme.borrow().graph_background_opacity);
     gb_opacity.set_hexpand(true);
     gb_opacity.set_draw_value(true);
-    gb_opacity.set_size_request(180, -1);
+    gb_opacity.set_size_request(180, 36);
     let h = handle.clone();
     let ld = loading.clone();
     gb_opacity.connect_value_changed(move |s| {
