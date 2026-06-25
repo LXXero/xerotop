@@ -23,6 +23,18 @@ use std::rc::Rc;
 thread_local! {
     /// The single live prefs window, if open.
     static WINDOW: RefCell<Option<Window>> = const { RefCell::new(None) };
+    /// Callback invoked when the theme is changed externally (e.g. by the desktop
+    /// colour-scheme auto-switcher) so the open prefs window can refresh its widgets.
+    static THEME_CHANGED_CB: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+}
+
+/// Notify the open prefs window that the theme was changed externally.
+pub fn theme_changed() {
+    THEME_CHANGED_CB.with(|cb| {
+        if let Some(f) = cb.borrow().as_ref() {
+            f();
+        }
+    });
 }
 
 const PANEL_TYPES: [&str; 19] = [
@@ -78,6 +90,7 @@ pub fn open(handle: &BarHandle) {
         .build();
     window.connect_close_request(|_| {
         WINDOW.with(|w| *w.borrow_mut() = None);
+        THEME_CHANGED_CB.with(|cb| *cb.borrow_mut() = None);
         glib::Propagation::Proceed
     });
     WINDOW.with(|w| *w.borrow_mut() = Some(window.clone()));
@@ -823,6 +836,9 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
     let (fs_c, fn_c, fl_c) = (f_small.clone(), f_normal.clone(), f_large.clone());
     let ld = loading.clone();
     selector.connect_selected_notify(move |d| {
+        if ld.get() {
+            return;
+        }
         // Read the name from the model object, not a captured Vec — the model is
         // rebuilt on "Save theme as…", so a stale index could panic.
         let Some(name) = d
@@ -925,6 +941,42 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
     save_row.append(&save_theme);
     save_row.append(&save_panels);
     page.append(&save_row);
+
+    // Register a callback so the prefs widgets refresh when the theme changes
+    // externally (desktop colour-scheme auto-switcher).
+    {
+        let names = theme_names();
+        let selector = selector.clone();
+        let ld = loading.clone();
+        let font_c = font_btn.clone();
+        let fs_c = f_small.clone();
+        let fn_c = f_normal.clone();
+        let fl_c = f_large.clone();
+        let gb_opacity_c = gb_opacity.clone();
+        let buttons_c = buttons.clone();
+        let h = handle.clone();
+        THEME_CHANGED_CB.with(|cb| {
+            *cb.borrow_mut() = Some(Box::new(move || {
+                let cur = h.cfg.borrow().theme.clone();
+                let Some(pos) = names.iter().position(|n| *n == cur) else {
+                    return;
+                };
+                ld.set(true);
+                selector.set_selected(pos as u32);
+                let t = h.theme.borrow();
+                font_c.set_font_desc(&FontDescription::from_string(&t.font_family));
+                fs_c.set_value(t.font_small as f64);
+                fn_c.set_value(t.font_normal as f64);
+                fl_c.set_value(t.font_large as f64);
+                gb_opacity_c.set_value(t.graph_background_opacity);
+                for (get, btn) in buttons_c.borrow().iter() {
+                    btn.set_rgba(&hex_to_rgba(&get(&t)));
+                }
+                drop(t);
+                ld.set(false);
+            }));
+        });
+    }
 
     page.append(&save_bar(handle));
     page

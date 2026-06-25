@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::bar::BarHandle;
+use crate::prefs;
 
 /// Initialise colour-scheme listener based on the desktop environment.
 pub fn init(handle: &BarHandle) {
@@ -166,4 +167,5 @@ fn apply(handle: &BarHandle, is_dark: bool) {
     }
     *handle.theme.borrow_mut() = t;
     handle.apply();
+    prefs::theme_changed();
 }
