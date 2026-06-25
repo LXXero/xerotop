@@ -822,7 +822,11 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
     gb_opacity.set_draw_value(true);
     gb_opacity.set_size_request(180, -1);
     let h = handle.clone();
+    let ld = loading.clone();
     gb_opacity.connect_value_changed(move |s| {
+        if ld.get() {
+            return;
+        }
         h.theme.borrow_mut().graph_background_opacity = s.value();
         h.restyle();
     });
