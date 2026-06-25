@@ -36,8 +36,10 @@ pub struct Theme {
     pub violet: String,
     /// Keyboard-LED "on"/glow color.
     pub led_on: String,
-    /// Graph background fill (hex `#rrggbb`); alpha is baked into the CSS.
+    /// Graph background fill (hex `#rrggbb`).
     pub graph_background: String,
+    /// Graph background fill opacity 0.0 .. 1.0.
+    pub graph_background_opacity: f64,
     // Optional panel-color defaults the theme can carry. Written only by the
     // "Save + panel colors" button; when present, an interactive theme switch
     // applies them to the config (so a theme can capture a full look, not just
@@ -68,6 +70,7 @@ impl Default for Theme {
             violet: "#c78cff".into(),
             led_on: "#5fd75f".into(),
             graph_background: "#000000".into(),
+            graph_background_opacity: 0.25,
             sensors: None,
             header: None,
         }
@@ -137,7 +140,7 @@ impl Theme {
         };
         let font = sanitize_font(&self.font_family);
         let (gr, gg, gb) = parse_hex(&self.graph_background);
-        let graph_bg = format!("rgba({gr},{gg},{gb},0.25)");
+        let graph_bg = format!("rgba({gr},{gg},{gb},{:.3})", self.graph_background_opacity.clamp(0.0, 1.0));
         format!(
             r#"
 /* The bar window must be transparent, or our semi-transparent .bar fill

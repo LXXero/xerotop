@@ -742,6 +742,19 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
     }
     page.append(&grid);
 
+    // Graph background opacity
+    let gb_opacity = Scale::with_range(Orientation::Horizontal, 0.0, 1.0, 0.01);
+    gb_opacity.set_value(handle.theme.borrow().graph_background_opacity);
+    gb_opacity.set_hexpand(true);
+    gb_opacity.set_draw_value(true);
+    gb_opacity.set_size_request(180, -1);
+    let h = handle.clone();
+    gb_opacity.connect_value_changed(move |s| {
+        h.theme.borrow_mut().graph_background_opacity = s.value();
+        h.restyle();
+    });
+    page.append(&row("Graph bg opacity", &gb_opacity));
+
     // Loading a theme: resolve the file, swap it in, refresh every widget.
     let h = handle.clone();
     let buttons_c = buttons.clone();
