@@ -396,6 +396,66 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     });
     page.append(&row("On-battery interval ×", &mult));
 
+    // --- Desktop colour-scheme auto-switch ---
+    let names = theme_names();
+    let auto = CheckButton::with_label("Follow desktop colour scheme");
+    auto.set_active(cfg.theme_switch.auto);
+    page.append(&auto);
+
+    // Light-theme dropdown.
+    let light = DropDown::from_strings(&names.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+    let cur_light = names
+        .iter()
+        .position(|n| *n == cfg.theme_switch.light)
+        .unwrap_or(0);
+    light.set_selected(cur_light as u32);
+    light.set_sensitive(cfg.theme_switch.auto);
+    let h = handle.clone();
+    light.connect_selected_notify(move |d| {
+        let Some(name) = d
+            .selected_item()
+            .and_downcast::<gtk::StringObject>()
+            .map(|o| o.string().to_string())
+        else {
+            return;
+        };
+        h.cfg.borrow_mut().theme_switch.light = name;
+    });
+    page.append(&row("Light theme", &light));
+
+    // Dark-theme dropdown.
+    let dark = DropDown::from_strings(&names.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+    let cur_dark = names
+        .iter()
+        .position(|n| *n == cfg.theme_switch.dark)
+        .unwrap_or(0);
+    dark.set_selected(cur_dark as u32);
+    dark.set_sensitive(cfg.theme_switch.auto);
+    let h = handle.clone();
+    dark.connect_selected_notify(move |d| {
+        let Some(name) = d
+            .selected_item()
+            .and_downcast::<gtk::StringObject>()
+            .map(|o| o.string().to_string())
+        else {
+            return;
+        };
+        h.cfg.borrow_mut().theme_switch.dark = name;
+    });
+    page.append(&row("Dark theme", &dark));
+
+    // Wire the checkbox to toggle dropdown sensitivity.
+    auto.connect_toggled({
+        let h = handle.clone();
+        let light = light.clone();
+        let dark = dark.clone();
+        move |c| {
+            h.cfg.borrow_mut().theme_switch.auto = c.is_active();
+            light.set_sensitive(c.is_active());
+            dark.set_sensitive(c.is_active());
+        }
+    });
+
     drop(cfg);
     page.append(&save_bar(handle));
     page

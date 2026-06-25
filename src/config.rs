@@ -435,6 +435,30 @@ fn default_panels() -> Vec<PanelConfig> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThemeSwitcher {
+    /// Enable automatic theme switching based on desktop color scheme.
+    #[serde(default)]
+    pub auto: bool,
+    /// Theme name to use in light mode.
+    #[serde(default = "default_theme")]
+    pub light: String,
+    /// Theme name to use in dark mode.
+    #[serde(default = "default_theme")]
+    pub dark: String,
+}
+
+impl Default for ThemeSwitcher {
+    fn default() -> Self {
+        Self {
+            auto: false,
+            light: "default".into(),
+            dark: "default".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Name of the theme to load (`themes/<name>.toml`); "default" = built-in.
     #[serde(default = "default_theme")]
@@ -460,6 +484,8 @@ pub struct Config {
     pub header: Vec<HeaderButton>,
     #[serde(default)]
     pub actions: Actions,
+    #[serde(default)]
+    pub theme_switch: ThemeSwitcher,
     #[serde(default = "default_panels")]
     pub panel: Vec<PanelConfig>,
 }
@@ -481,6 +507,7 @@ impl Default for Config {
             mail: MailConfig::default(),
             header: Vec::new(),
             actions: Actions::default(),
+            theme_switch: ThemeSwitcher::default(),
             panel: default_panels(),
         }
     }

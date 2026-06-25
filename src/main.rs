@@ -11,6 +11,7 @@ mod power;
 mod prefs;
 mod taskbar;
 mod theme;
+mod theme_switch;
 mod tray;
 mod weather;
 mod widgets;
@@ -30,6 +31,7 @@ fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(move |app| {
         let bar = bar::build(app, config::load());
+        theme_switch::init(&bar);
         if open_prefs {
             prefs::open(&bar);
         }
