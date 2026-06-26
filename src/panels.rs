@@ -317,7 +317,7 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
     match cfg.kind.as_str() {
         "header" => {
             let (tf, df) = clock_fmts();
-            Some(header_panel(iv, tf, df, actions))
+            Some(header_panel(iv, tf, df, actions, cfg.show_hostname, cfg.short_hostname, cfg.show_kernel))
         }
         "clock" => {
             let (tf, df) = clock_fmts();
@@ -2627,7 +2627,7 @@ fn header_button(icon: &str, command: &str, color: &str, actions: &Actions) -> g
     btn
 }
 
-fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Actions) -> Panel {
+fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Actions, show_hostname: bool, short_hostname: bool, show_kernel: bool) -> Panel {
     let root = panel_box();
     root.add_css_class("clock");
 
@@ -2675,6 +2675,34 @@ fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Act
 
     root.append(&time_row);
     root.append(&date_row);
+
+    // Hostname row
+    if show_hostname {
+        let row = gtk::CenterBox::new();
+        let raw = std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let host = if short_hostname {
+            raw.split('.').next().unwrap_or(&raw).to_string()
+        } else {
+            raw
+        };
+        let l = sub();
+        l.set_text(&host);
+        row.set_center_widget(Some(&l));
+        root.append(&row);
+    }
+    // Kernel version row
+    if show_kernel {
+        let row = gtk::CenterBox::new();
+        let os = std::fs::read_to_string("/proc/sys/kernel/ostype").unwrap_or_default();
+        let rel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
+        let l = sub();
+        l.set_text(&format!("{} {}", os.trim(), rel.trim()));
+        row.set_center_widget(Some(&l));
+        root.append(&row);
+    }
 
     let update = Box::new(move || {
         set_clock_time(&time, &ampm, &time_fmt);

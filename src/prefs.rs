@@ -1136,6 +1136,9 @@ fn layout_page(handle: &BarHandle) -> GtkBox {
             show_capacity: true,
             show_disk_total: false,
             core: -1,
+            show_hostname: false,
+            short_hostname: false,
+            show_kernel: false,
         });
         h.apply();
         populate_panels(&h, &list_c);
@@ -1796,6 +1799,48 @@ fn header_detail(handle: &BarHandle, i: usize) -> GtkBox {
         df.as_deref(),
         |p, v| p.date_format = v,
     ));
+
+    // Show hostname
+    let hh = CheckButton::with_label("Show hostname");
+    hh.set_active(handle.cfg.borrow().panel[i].show_hostname);
+    {
+        let h = handle.clone();
+        hh.connect_toggled(move |c| {
+            if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                p.show_hostname = c.is_active();
+            }
+            h.apply();
+        });
+    }
+    page.append(&hh);
+
+    // Short hostname
+    let sh = CheckButton::with_label("Short hostname (strip domain)");
+    sh.set_active(handle.cfg.borrow().panel[i].short_hostname);
+    {
+        let h = handle.clone();
+        sh.connect_toggled(move |c| {
+            if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                p.short_hostname = c.is_active();
+            }
+            h.apply();
+        });
+    }
+    page.append(&sh);
+
+    // Show kernel
+    let hk = CheckButton::with_label("Show kernel version");
+    hk.set_active(handle.cfg.borrow().panel[i].show_kernel);
+    {
+        let h = handle.clone();
+        hk.connect_toggled(move |c| {
+            if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                p.show_kernel = c.is_active();
+            }
+            h.apply();
+        });
+    }
+    page.append(&hk);
 
     let sep = Label::new(Some(
         "Icons — a glyph + command per slot. '@menu' = power popover; blank = none.",

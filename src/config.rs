@@ -329,6 +329,15 @@ pub struct PanelConfig {
     /// cpu panel only: which core to sample. -1 = aggregate (all cores), 0 = CPU0.
     #[serde(default = "default_core")]
     pub core: i32,
+    /// header panel only: show hostname before the date row.
+    #[serde(default)]
+    pub show_hostname: bool,
+    /// header panel only: strip domain part from hostname (e.g. "kiwawa.local" → "kiwawa").
+    #[serde(default)]
+    pub short_hostname: bool,
+    /// header panel only: show kernel info (e.g. "Linux 7.1.1-tkg-eevdf-rt").
+    #[serde(default)]
+    pub show_kernel: bool,
     /// Show the panel's label/value header row. Off → just the graphic (e.g. a
     /// `cores` panel under `cpu` reads as one block, no repeated "CPU" header).
     #[serde(default = "default_true")]
@@ -478,6 +487,9 @@ fn default_panels() -> Vec<PanelConfig> {
         show_capacity: true,
         show_disk_total: false,
         core: -1,
+        show_hostname: false,
+        short_hostname: false,
+        show_kernel: false,
     })
     .collect()
 }
