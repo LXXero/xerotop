@@ -1,177 +1,121 @@
 use gtk::glib;
-use gtk::prelude::ObjectExt;
-use notify::Watcher;
-use std::path::PathBuf;
-use std::time::Duration;
 
 use crate::bar::BarHandle;
 use crate::prefs;
 
-/// Initialise colour-scheme listener based on the desktop environment, and
-/// apply the current scheme immediately so the bar matches from startup.
+/// Initialise colour-scheme listener via the D-Bus portal and apply the
+/// current scheme immediately so the bar and prefs window match from startup.
 pub fn init(handle: &BarHandle) {
-    let de = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
-    if de.to_uppercase().contains("KDE") {
-        start_kde_watcher(handle);
-        sync_once_kde(handle);
-    } else {
-        // Fallback: GNOME, Budgie, Cinnamon, or any other DE that writes
-        // org.gnome.desktop.interface color-scheme.
-        start_gnome_poller(handle);
-        sync_once_gnome(handle);
-    }
-}
-
-/// Apply the current desktop colour scheme immediately (no-op if auto off).
-fn sync_once_kde(handle: &BarHandle) {
-    if !handle.cfg.borrow().theme_switch.auto {
-        return;
-    }
-    if let Some(path) = kdeglobals_path() {
-        if let Some(name) = read_kde_color_scheme(&path) {
-            apply(handle, classify(&name));
-        }
-    }
-}
-
-fn sync_once_gnome(handle: &BarHandle) {
-    if !handle.cfg.borrow().theme_switch.auto {
-        return;
-    }
-    let val: String = gtk::gio::Settings::new("org.gnome.desktop.interface")
-        .property("color-scheme");
-    apply(handle, val == "prefer-dark");
-}
-
-/// Poll GSettings for the colour-scheme key every 2 seconds.
-/// We can't use the "changed" signal because GSettings callbacks need Send+Sync,
-/// and BarHandle contains Rc (neither Send nor Sync).
-fn start_gnome_poller(handle: &BarHandle) {
-    let h = handle.clone();
-    let mut last: String = String::new();
-    glib::timeout_add_local(Duration::from_secs(2), move || {
-        let val: String = gtk::gio::Settings::new("org.gnome.desktop.interface")
-            .property("color-scheme");
-        if val != last {
-            last.clone_from(&val);
-            if h.cfg.borrow().theme_switch.auto {
-                apply(&h, val == "prefer-dark");
-            }
-        }
-        glib::ControlFlow::Continue
-    });
-}
-
-/// Watch ~/.config/kdedefaults/kdeglobals for writes and switch theme on change.
-/// Watches the parent directory to survive atomic renames (KDE writes via
-/// temp-file + rename, which changes the inode).
-fn start_kde_watcher(handle: &BarHandle) {
-    if let Some(target) = kdeglobals_path() {
-        let dir = target.parent().unwrap_or(&target).to_path_buf();
-        let filename = target
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let (tx, rx) = async_channel::unbounded::<PathBuf>();
-
-        std::thread::spawn(move || watch_kdeglobals_dir(dir, filename, target, tx));
-
-        let h = handle.clone();
-        glib::spawn_future_local(async move {
-            while let Ok(target) = rx.recv().await {
-                if !h.cfg.borrow().theme_switch.auto {
-                    continue;
-                }
-                if let Some(name) = read_kde_color_scheme(&target) {
-                    apply(&h, classify(&name));
-                }
-            }
-        });
-    }
-}
-
-fn kdeglobals_path() -> Option<PathBuf> {
-    let base = std::env::var("XDG_CONFIG_HOME")
-        .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
-    Some(PathBuf::from(base).join("kdedefaults/kdeglobals"))
-}
-
-/// Watch a directory for changes to a specific filename, using inotify-on-dir
-/// to survive atomic renames.
-fn watch_kdeglobals_dir(
-    dir: PathBuf,
-    filename: String,
-    target: PathBuf,
-    tx: async_channel::Sender<PathBuf>,
-) {
-    let (notify_tx, notify_rx) = std::sync::mpsc::channel::<notify::Result<notify::Event>>();
-    let mut watcher = match notify::RecommendedWatcher::new(notify_tx, notify::Config::default()) {
-        Ok(w) => w,
+    sync_once(handle);
+    let address = match std::env::var("DBUS_SESSION_BUS_ADDRESS") {
+        Ok(a) if !a.is_empty() => a,
+        _ => return,
+    };
+    let conn = match gtk::gio::DBusConnection::for_address_sync(
+        &address,
+        gtk::gio::DBusConnectionFlags::AUTHENTICATION_CLIENT
+            | gtk::gio::DBusConnectionFlags::MESSAGE_BUS_CONNECTION,
+        None::<&gtk::gio::DBusAuthObserver>,
+        None::<&gtk::gio::Cancellable>,
+    ) {
+        Ok(c) => c,
         Err(_) => return,
     };
-    if watcher.watch(&dir, notify::RecursiveMode::NonRecursive).is_err() {
+    subscribe_signals(handle, &conn);
+}
+
+/// Read the current colour-scheme via the portal and apply it.
+/// Creates a temporary D-Bus connection for the one-off call.
+pub(crate) fn sync_once(handle: &BarHandle) {
+    if !handle.cfg.borrow().theme_switch.auto {
         return;
     }
-
-    loop {
-        // Wait for an event on the target file.
-        loop {
-            match notify_rx.recv_timeout(Duration::from_secs(10)) {
-                Ok(Ok(e))
-                    if matches!(e.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_))
-                        && e.paths.iter().any(|p| p.ends_with(&filename)) =>
-                {
-                    break;
-                }
-                Ok(_) => continue,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(_) => return,
-            }
+    let address = match std::env::var("DBUS_SESSION_BUS_ADDRESS") {
+        Ok(a) if !a.is_empty() => a,
+        _ => return,
+    };
+    let conn = match gtk::gio::DBusConnection::for_address_sync(
+        &address,
+        gtk::gio::DBusConnectionFlags::AUTHENTICATION_CLIENT
+            | gtk::gio::DBusConnectionFlags::MESSAGE_BUS_CONNECTION,
+        None::<&gtk::gio::DBusAuthObserver>,
+        None::<&gtk::gio::Cancellable>,
+    ) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let params = glib::Variant::tuple_from_iter([
+        glib::Variant::from("org.freedesktop.appearance"),
+        glib::Variant::from("color-scheme"),
+    ]);
+    if let Ok(reply) = conn.call_sync(
+        Some("org.freedesktop.portal.Desktop"),
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.portal.Settings",
+        "Read",
+        Some(&params),
+        None::<&glib::VariantTy>,
+        gtk::gio::DBusCallFlags::NONE,
+        -1,
+        None::<&gtk::gio::Cancellable>,
+    ) {
+        // reply is (v) — extract the u32 value
+        if let Some(val) = reply.child_value(0).get::<u32>() {
+            apply(handle, val == 1);
         }
-        // Debounce: KDE writes kdeglobals in bursts during a theme switch.
-        let mut deadline = std::time::Instant::now() + Duration::from_millis(200);
-        loop {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-            match notify_rx.recv_timeout(remaining) {
-                Ok(Ok(e))
-                    if matches!(e.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_))
-                        && e.paths.iter().any(|p| p.ends_with(&filename)) =>
-                {
-                    deadline = std::time::Instant::now() + Duration::from_millis(200);
-                    continue;
-                }
-                _ => break,
-            }
-        }
-        let _ = tx.send_blocking(target.clone());
     }
 }
 
-fn read_kde_color_scheme(path: &PathBuf) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let mut in_general = false;
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            in_general = line.eq_ignore_ascii_case("[general]");
-            continue;
-        }
-        if in_general && line.starts_with("ColorScheme=") {
-            return Some(line["ColorScheme=".len()..].to_string());
-        }
-    }
-    None
+/// Subscribe to the portal's SettingChanged signal for live updates.
+/// The returned SignalSubscription is leaked — it must live for the entire
+/// process lifetime to keep the D-Bus signal subscription active.
+fn subscribe_signals(handle: &BarHandle, conn: &gtk::gio::DBusConnection) {
+    let h = handle.clone();
+    let sub = conn.subscribe_to_signal::<_>(
+        Some("org.freedesktop.portal.Desktop"),
+        Some("org.freedesktop.portal.Settings"),
+        Some("SettingChanged"),
+        Some("/org/freedesktop/portal/desktop"),
+        None::<&str>,
+        gtk::gio::DBusSignalFlags::NONE,
+        move |signal| {
+            let params = signal.parameters;
+            if params.n_children() < 3 {
+                return;
+            }
+            if params.child_value(0).get::<String>()
+                .as_deref() != Some("org.freedesktop.appearance")
+                || params.child_value(1).get::<String>()
+                    .as_deref() != Some("color-scheme")
+            {
+                return;
+            }
+            if !h.cfg.borrow().theme_switch.auto {
+                return;
+            }
+            // params.child_value(2) is a variant wrapping a u32
+            let is_dark = params
+                .child_value(2)
+                .child_value(0)
+                .get::<u32>()
+                .is_some_and(|v| v == 1);
+            apply(&h, is_dark);
+        },
+    );
+    // Leak: the subscription must live for the entire process lifetime so that
+    // SettingChanged signals continue to be received.
+    std::mem::forget(sub);
 }
 
-/// Heuristic: if the KDE colour-scheme name contains "dark" (case-insensitive),
-/// treat it as a dark theme.  Works for all built-in KDE schemes (BreezeDark,
-/// BreezeDarkBlue, …).  Custom schemes that don't follow this convention are a
-/// known blind spot — the user should configure their mapping explicitly.
-fn classify(scheme: &str) -> bool {
-    scheme.to_lowercase().contains("dark")
+/// Return the desktop-environment style label for CSS class selection.
+#[allow(dead_code)]
+pub fn desktop_style() -> &'static str {
+    let de = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+    if de.to_uppercase().contains("KDE") {
+        "kde"
+    } else {
+        "gnome"
+    }
 }
 
 /// Replicate the theme-switch logic from the prefs selector callback.

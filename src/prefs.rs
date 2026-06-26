@@ -8,6 +8,7 @@ use crate::config::{
     Align, BarLength, CornerMode, Edge, HeaderButton, HeaderSlot, Layer, PanelConfig, TempSensor,
 };
 use crate::theme::{Theme, themes_dir};
+use crate::theme_switch;
 use gtk::gdk::RGBA;
 use gtk::glib;
 use gtk::pango::FontDescription;
@@ -531,6 +532,9 @@ fn general_page(handle: &BarHandle) -> GtkBox {
             h.cfg.borrow_mut().theme_switch.auto = c.is_active();
             light.set_sensitive(c.is_active());
             dark.set_sensitive(c.is_active());
+            if c.is_active() {
+                theme_switch::sync_once(&h);
+            }
         }
     });
 
