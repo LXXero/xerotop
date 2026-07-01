@@ -135,6 +135,11 @@ fn command_row(
     entry.connect_changed(move |e| set(&mut h.cfg.borrow_mut().actions, e.text().to_string()));
     let h = handle.clone();
     entry.connect_activate(move |_| h.apply());
+    // Also apply on focus-out so clicking away (e.g. to Save) takes effect.
+    let h = handle.clone();
+    let focus = gtk::EventControllerFocus::new();
+    focus.connect_leave(move |_| h.apply());
+    entry.add_controller(focus);
     // Fixed-width label column so stacked command rows (Lock/Logout/Reboot/
     // Shutdown) line their entries up, instead of each starting after its own
     // label's width.
@@ -649,6 +654,11 @@ fn weather_detail(handle: &BarHandle) -> GtkBox {
     wx_loc.connect_changed(move |e| h.cfg.borrow_mut().weather.location = e.text().to_string());
     let h = handle.clone();
     wx_loc.connect_activate(move |_| h.apply());
+    // Also apply on focus-out so clicking away (e.g. to Save) takes effect.
+    let h = handle.clone();
+    let focus = gtk::EventControllerFocus::new();
+    focus.connect_leave(move |_| h.apply());
+    wx_loc.add_controller(focus);
     page.append(&row("Location", &wx_loc));
 
     let wx_units = DropDown::from_strings(&["auto", "°C", "°F"]);
@@ -704,6 +714,11 @@ fn mail_detail(handle: &BarHandle) -> GtkBox {
     dir.connect_changed(move |e| h.cfg.borrow_mut().mail.dir = e.text().to_string());
     let h = handle.clone();
     dir.connect_activate(move |_| h.apply_mail());
+    // Also apply on focus-out so clicking away (e.g. to Save) takes effect.
+    let h = handle.clone();
+    let focus = gtk::EventControllerFocus::new();
+    focus.connect_leave(move |_| h.apply_mail());
+    dir.add_controller(focus);
     page.append(&row("Maildir", &dir));
 
     let cmd = Entry::new();
@@ -1758,6 +1773,11 @@ fn fmt_row(
     });
     let h = handle.clone();
     entry.connect_activate(move |_| h.apply());
+    // Also apply on focus-out so clicking away (e.g. to Save) takes effect.
+    let h = handle.clone();
+    let focus = gtk::EventControllerFocus::new();
+    focus.connect_leave(move |_| h.apply());
+    entry.add_controller(focus);
     row(label, &entry)
 }
 
