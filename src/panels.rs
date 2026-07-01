@@ -2788,6 +2788,7 @@ fn header_panel(
         let text = match kernel_format {
             OsFull => format!("{os} {rel}"),
             OsShort => format!("{os} {short}"),
+            OsOnly => os.to_string(),
             Full => rel.to_string(),
             Short => short.to_string(),
         };

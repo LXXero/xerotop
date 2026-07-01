@@ -32,6 +32,8 @@ pub enum KernelFormat {
     OsFull,
     /// OS + release with the build suffix stripped, e.g. "Linux 7.1.1".
     OsShort,
+    /// OS name only, e.g. "Linux".
+    OsOnly,
     /// Full release only, e.g. "7.1.1-tkg-eevdf-rt".
     Full,
     /// Release only, suffix stripped, e.g. "7.1.1".

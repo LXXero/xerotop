@@ -1856,16 +1856,18 @@ fn kfmt_idx(f: crate::config::KernelFormat) -> u32 {
     match f {
         OsFull => 0,
         OsShort => 1,
-        Full => 2,
-        Short => 3,
+        OsOnly => 2,
+        Full => 3,
+        Short => 4,
     }
 }
 fn kfmt_from_idx(i: u32) -> crate::config::KernelFormat {
     use crate::config::KernelFormat::*;
     match i {
         1 => OsShort,
-        2 => Full,
-        3 => Short,
+        2 => OsOnly,
+        3 => Full,
+        4 => Short,
         _ => OsFull,
     }
 }
@@ -2008,6 +2010,7 @@ fn header_detail(handle: &BarHandle, i: usize) -> GtkBox {
     let kfmt = DropDown::from_strings(&[
         "OS + Full Version",
         "OS + Short Version",
+        "OS Only",
         "Full Version",
         "Short Version",
     ]);
