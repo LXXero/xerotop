@@ -1724,6 +1724,12 @@ fn header_slot_row(handle: &BarHandle, slot: HeaderSlot, name: &str) -> GtkBox {
     });
     let h = handle.clone();
     cmd.connect_activate(move |_| h.apply());
+    // Also apply on focus-out so clicking away (e.g. straight to "Save") rebinds
+    // the header command in the running bar, matching the glyph field above.
+    let h = handle.clone();
+    let focus = gtk::EventControllerFocus::new();
+    focus.connect_leave(move |_| h.apply());
+    cmd.add_controller(focus);
     r
 }
 
