@@ -23,6 +23,19 @@ impl Edge {
     }
 }
 
+/// Which of the theme's three font sizes a bit of text uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FontSize {
+    /// The theme's `font_small` (same as `.sub` text — the default).
+    #[default]
+    Small,
+    /// The theme's `font_normal` (base label/value size).
+    Medium,
+    /// The theme's `font_large` (clock-time size).
+    Large,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum CornerMode {
@@ -338,6 +351,16 @@ pub struct PanelConfig {
     /// header panel only: show kernel info (e.g. "Linux 7.1.1-tkg-eevdf-rt").
     #[serde(default)]
     pub show_kernel: bool,
+    /// header panel only: place the host/kernel rows above the clock (gkrellm
+    /// style) instead of below it.
+    #[serde(default)]
+    pub host_above_clock: bool,
+    /// header panel only: font size for the hostname row.
+    #[serde(default)]
+    pub hostname_font: FontSize,
+    /// header panel only: font size for the kernel row.
+    #[serde(default)]
+    pub kernel_font: FontSize,
     /// Show the panel's label/value header row. Off → just the graphic (e.g. a
     /// `cores` panel under `cpu` reads as one block, no repeated "CPU" header).
     #[serde(default = "default_true")]
@@ -490,6 +513,9 @@ fn default_panels() -> Vec<PanelConfig> {
         show_hostname: false,
         short_hostname: false,
         show_kernel: false,
+        host_above_clock: false,
+        hostname_font: FontSize::Small,
+        kernel_font: FontSize::Small,
     })
     .collect()
 }

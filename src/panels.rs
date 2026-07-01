@@ -317,7 +317,18 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
     match cfg.kind.as_str() {
         "header" => {
             let (tf, df) = clock_fmts();
-            Some(header_panel(iv, tf, df, actions, cfg.show_hostname, cfg.short_hostname, cfg.show_kernel))
+            Some(header_panel(
+                iv,
+                tf,
+                df,
+                actions,
+                cfg.show_hostname,
+                cfg.short_hostname,
+                cfg.show_kernel,
+                cfg.host_above_clock,
+                cfg.hostname_font,
+                cfg.kernel_font,
+            ))
         }
         "clock" => {
             let (tf, df) = clock_fmts();
@@ -2662,7 +2673,28 @@ fn header_button(slot: HeaderSlot, icon: &str, command: &str, color: &str, actio
     btn
 }
 
-fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Actions, show_hostname: bool, short_hostname: bool, show_kernel: bool) -> Panel {
+/// CSS class for a configured font size (see `.fs-*` in theme.rs).
+fn fs_class(s: crate::config::FontSize) -> &'static str {
+    use crate::config::FontSize::*;
+    match s {
+        Small => "fs-s",
+        Medium => "fs-m",
+        Large => "fs-l",
+    }
+}
+
+fn header_panel(
+    interval: f64,
+    time_fmt: String,
+    date_fmt: String,
+    actions: &Actions,
+    show_hostname: bool,
+    short_hostname: bool,
+    show_kernel: bool,
+    host_above_clock: bool,
+    hostname_font: crate::config::FontSize,
+    kernel_font: crate::config::FontSize,
+) -> Panel {
     let root = panel_box();
     root.add_css_class("clock");
 
@@ -2708,11 +2740,9 @@ fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Act
         date_row.set_end_widget(Some(&w));
     }
 
-    root.append(&time_row);
-    root.append(&date_row);
-
-    // Hostname row
-    if show_hostname {
+    // Build the optional host/kernel rows up front so they can go above or below
+    // the clock (gkrellm put the hostname at the very top).
+    let host_row = show_hostname.then(|| {
         let row = gtk::CenterBox::new();
         let raw = std::fs::read_to_string("/proc/sys/kernel/hostname")
             .unwrap_or_default()
@@ -2724,19 +2754,39 @@ fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Act
             raw
         };
         let l = sub();
+        l.add_css_class(fs_class(hostname_font));
         l.set_text(&host);
         row.set_center_widget(Some(&l));
-        root.append(&row);
-    }
-    // Kernel version row
-    if show_kernel {
+        row
+    });
+    let kernel_row = show_kernel.then(|| {
         let row = gtk::CenterBox::new();
         let os = std::fs::read_to_string("/proc/sys/kernel/ostype").unwrap_or_default();
         let rel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
         let l = sub();
+        l.add_css_class(fs_class(kernel_font));
         l.set_text(&format!("{} {}", os.trim(), rel.trim()));
         row.set_center_widget(Some(&l));
-        root.append(&row);
+        row
+    });
+    let append_clock = |root: &GtkBox| {
+        root.append(&time_row);
+        root.append(&date_row);
+    };
+    let append_host = |root: &GtkBox| {
+        if let Some(r) = &host_row {
+            root.append(r);
+        }
+        if let Some(r) = &kernel_row {
+            root.append(r);
+        }
+    };
+    if host_above_clock {
+        append_host(&root);
+        append_clock(&root);
+    } else {
+        append_clock(&root);
+        append_host(&root);
     }
 
     let update = Box::new(move || {

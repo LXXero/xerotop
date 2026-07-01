@@ -184,6 +184,11 @@ window.xerotop {{ background-color: transparent; }}
 .xerotop .graph {{ background-color: {graph_bg}; }}
 .xerotop .bar-meter {{ background-color: transparent; }}
 .xerotop .sub {{ font-size: {small}px; color: {muted}; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
+/* Explicit font-size picks (host/kernel rows). Placed after .sub so they win
+   over its font-size at equal specificity when both classes are present. */
+.xerotop .fs-s {{ font-size: {small}px; }}
+.xerotop .fs-m {{ font-size: {normal}px; }}
+.xerotop .fs-l {{ font-size: {large}px; }}
 .xerotop .task {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; padding: 1px 3px; font-size: {small}px; color: {label}; }}
 .xerotop .task:hover {{ color: {value}; }}
 .xerotop .task-active {{ background-color: rgba(255,255,255,0.10); color: {bright}; }}

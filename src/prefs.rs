@@ -1164,6 +1164,9 @@ fn layout_page(handle: &BarHandle) -> GtkBox {
             show_hostname: false,
             short_hostname: false,
             show_kernel: false,
+            host_above_clock: false,
+            hostname_font: crate::config::FontSize::Small,
+            kernel_font: crate::config::FontSize::Small,
         });
         h.apply();
         populate_panels(&h, &list_c);
@@ -1794,6 +1797,24 @@ fn current_panel_index() -> usize {
 
 /// Header panel detail: clock formats, the four icon slots, and the power-menu
 /// command strings the `@menu` popover runs.
+/// FontSize <-> dropdown index (S=0, M=1, L=2).
+fn font_idx(f: crate::config::FontSize) -> u32 {
+    use crate::config::FontSize::*;
+    match f {
+        Small => 0,
+        Medium => 1,
+        Large => 2,
+    }
+}
+fn font_from_idx(i: u32) -> crate::config::FontSize {
+    use crate::config::FontSize::*;
+    match i {
+        1 => Medium,
+        2 => Large,
+        _ => Small,
+    }
+}
+
 fn header_detail(handle: &BarHandle, i: usize) -> GtkBox {
     // Seed default header buttons so the slots show what's currently on the bar.
     if handle.cfg.borrow().header.is_empty() {
@@ -1837,23 +1858,28 @@ fn header_detail(handle: &BarHandle, i: usize) -> GtkBox {
         |p, v| p.date_format = v,
     ));
 
-    // Show hostname
+    // Hostname row: [Show hostname] [Short name] [font S/M/L].
+    // "Short name" is hidden until hostname is enabled.
+    let host_row = GtkBox::new(Orientation::Horizontal, 8);
     let hh = CheckButton::with_label("Show hostname");
     hh.set_active(handle.cfg.borrow().panel[i].show_hostname);
+    let sh = CheckButton::with_label("Short name");
+    sh.set_active(handle.cfg.borrow().panel[i].short_hostname);
+    sh.set_visible(handle.cfg.borrow().panel[i].show_hostname);
+    let host_font = DropDown::from_strings(&["S", "M", "L"]);
+    host_font.set_tooltip_text(Some("Hostname font size (small / medium / large)"));
+    host_font.set_selected(font_idx(handle.cfg.borrow().panel[i].hostname_font));
     {
         let h = handle.clone();
+        let sh_c = sh.clone();
         hh.connect_toggled(move |c| {
             if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
                 p.show_hostname = c.is_active();
             }
+            sh_c.set_visible(c.is_active());
             h.apply();
         });
     }
-    page.append(&hh);
-
-    // Short hostname
-    let sh = CheckButton::with_label("Short hostname (strip domain)");
-    sh.set_active(handle.cfg.borrow().panel[i].short_hostname);
     {
         let h = handle.clone();
         sh.connect_toggled(move |c| {
@@ -1863,11 +1889,27 @@ fn header_detail(handle: &BarHandle, i: usize) -> GtkBox {
             h.apply();
         });
     }
-    page.append(&sh);
+    {
+        let h = handle.clone();
+        host_font.connect_selected_notify(move |d| {
+            if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                p.hostname_font = font_from_idx(d.selected());
+            }
+            h.apply();
+        });
+    }
+    host_row.append(&hh);
+    host_row.append(&sh);
+    host_row.append(&host_font);
+    page.append(&host_row);
 
-    // Show kernel
-    let hk = CheckButton::with_label("Show kernel version");
+    // Kernel row: [Show kernel] [font S/M/L].
+    let kern_row = GtkBox::new(Orientation::Horizontal, 8);
+    let hk = CheckButton::with_label("Show kernel");
     hk.set_active(handle.cfg.borrow().panel[i].show_kernel);
+    let kern_font = DropDown::from_strings(&["S", "M", "L"]);
+    kern_font.set_tooltip_text(Some("Kernel font size (small / medium / large)"));
+    kern_font.set_selected(font_idx(handle.cfg.borrow().panel[i].kernel_font));
     {
         let h = handle.clone();
         hk.connect_toggled(move |c| {
@@ -1877,7 +1919,32 @@ fn header_detail(handle: &BarHandle, i: usize) -> GtkBox {
             h.apply();
         });
     }
-    page.append(&hk);
+    {
+        let h = handle.clone();
+        kern_font.connect_selected_notify(move |d| {
+            if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                p.kernel_font = font_from_idx(d.selected());
+            }
+            h.apply();
+        });
+    }
+    kern_row.append(&hk);
+    kern_row.append(&kern_font);
+    page.append(&kern_row);
+
+    // Host/kernel position relative to the clock (gkrellm put them on top).
+    let above = CheckButton::with_label("Host/kernel above clock");
+    above.set_active(handle.cfg.borrow().panel[i].host_above_clock);
+    {
+        let h = handle.clone();
+        above.connect_toggled(move |c| {
+            if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                p.host_above_clock = c.is_active();
+            }
+            h.apply();
+        });
+    }
+    page.append(&above);
 
     let sep = Label::new(Some(
         "Icons — a glyph + command per slot. '@menu' = power popover; blank = none.",
