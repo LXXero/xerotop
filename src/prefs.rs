@@ -1624,7 +1624,11 @@ fn header_slot_row(handle: &BarHandle, slot: HeaderSlot, name: &str) -> GtkBox {
             item.set_child(Some(&label));
         }
     });
-    factory.connect_bind(|_, item| {
+    // The dropdown popup is reparented to the window overlay when open, so the
+    // `.glyphpick` font-family CSS never reaches its list items — apply the Nerd
+    // Font directly via Pango `face=` so the glyphs actually render there.
+    let glyph_font = handle.theme.borrow().font_family.clone();
+    factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<ListItem>() else {
             return;
         };
@@ -1636,18 +1640,22 @@ fn header_slot_row(handle: &BarHandle, slot: HeaderSlot, name: &str) -> GtkBox {
         let Some(label) = item.child().and_downcast::<Label>() else {
             return;
         };
+        let face = glib::markup_escape_text(&glyph_font);
         // "<glyph>  name" → big glyph + normal name; other rows render plain.
         let mut chars = text.chars();
         let first = chars.next();
         let rest: String = chars.collect();
         if let Some(g) = first.filter(|_| rest.starts_with("  ")) {
             label.set_markup(&format!(
-                "<span size='180%'>{}</span>{}",
+                "<span face='{face}'><span size='180%'>{}</span>{}</span>",
                 glib::markup_escape_text(&g.to_string()),
                 glib::markup_escape_text(&rest),
             ));
         } else {
-            label.set_text(&text);
+            label.set_markup(&format!(
+                "<span face='{face}'>{}</span>",
+                glib::markup_escape_text(&text)
+            ));
         }
     });
     picker.set_factory(Some(&factory));
