@@ -1869,14 +1869,17 @@ fn header_detail(handle: &BarHandle, i: usize) -> GtkBox {
     let host_font = DropDown::from_strings(&["S", "M", "L"]);
     host_font.set_tooltip_text(Some("Hostname font size (small / medium / large)"));
     host_font.set_selected(font_idx(handle.cfg.borrow().panel[i].hostname_font));
+    host_font.set_visible(handle.cfg.borrow().panel[i].show_hostname);
     {
         let h = handle.clone();
         let sh_c = sh.clone();
+        let hf_c = host_font.clone();
         hh.connect_toggled(move |c| {
             if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
                 p.show_hostname = c.is_active();
             }
             sh_c.set_visible(c.is_active());
+            hf_c.set_visible(c.is_active());
             h.apply();
         });
     }
@@ -1910,12 +1913,15 @@ fn header_detail(handle: &BarHandle, i: usize) -> GtkBox {
     let kern_font = DropDown::from_strings(&["S", "M", "L"]);
     kern_font.set_tooltip_text(Some("Kernel font size (small / medium / large)"));
     kern_font.set_selected(font_idx(handle.cfg.borrow().panel[i].kernel_font));
+    kern_font.set_visible(handle.cfg.borrow().panel[i].show_kernel);
     {
         let h = handle.clone();
+        let kf_c = kern_font.clone();
         hk.connect_toggled(move |c| {
             if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
                 p.show_kernel = c.is_active();
             }
+            kf_c.set_visible(c.is_active());
             h.apply();
         });
     }
