@@ -14,43 +14,6 @@ fn read_u64(p: &Path) -> u64 {
         .unwrap_or(0)
 }
 
-/// CPU busy percentage, computed from deltas of /proc/stat.
-pub struct Cpu {
-    prev: (u64, u64), // (idle, total)
-}
-
-impl Cpu {
-    pub fn new() -> Self {
-        Self { prev: Self::raw() }
-    }
-
-    fn raw() -> (u64, u64) {
-        let stat = fs::read_to_string("/proc/stat").unwrap_or_default();
-        let line = stat.lines().next().unwrap_or("");
-        let vals: Vec<u64> = line
-            .split_whitespace()
-            .skip(1)
-            .filter_map(|v| v.parse().ok())
-            .collect();
-        let idle = vals.get(3).copied().unwrap_or(0) + vals.get(4).copied().unwrap_or(0);
-        let total: u64 = vals.iter().sum();
-        (idle, total)
-    }
-
-    /// Busy % since last call, 0..=100.
-    pub fn sample(&mut self) -> f64 {
-        let (idle, total) = Self::raw();
-        let di = idle.saturating_sub(self.prev.0) as f64;
-        let dt = total.saturating_sub(self.prev.1) as f64;
-        self.prev = (idle, total);
-        if dt > 0.0 {
-            ((1.0 - di / dt) * 100.0).clamp(0.0, 100.0)
-        } else {
-            0.0
-        }
-    }
-}
-
 /// Per-core CPU busy %, from the `cpuN` lines of /proc/stat.
 pub struct CpuCores {
     prev: Vec<(u64, u64)>,
@@ -657,7 +620,7 @@ impl Net {
 /// Disk throughput in KB/s, preferring physical whole-disk block devices and
 /// falling back to all whole disks when running in a virtualized/container view.
 pub struct Disk {
-    prev: (u64, u64), // (sectors read, sectors written)
+    prev: (u64, u64),
     at: Instant,
 }
 

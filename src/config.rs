@@ -23,6 +23,16 @@ impl Edge {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CornerMode {
+    /// Same corner radius on all four corners.
+    #[default]
+    Uniform,
+    /// Only round the corners that face away from the screen edge.
+    EdgeAware,
+}
+
 /// The bar's length along its long axis (height for vertical bars, width for
 /// horizontal): either stretched to fill the monitor edge, or a fixed pixel
 /// count. In TOML: `length = "full"` (or "max") or `length = 600`.
@@ -80,6 +90,31 @@ pub enum Layer {
     Overlay,
 }
 
+fn deserialize_monitor<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+    struct V;
+    impl<'de> de::Visitor<'de> for V {
+        type Value = String;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("string or integer")
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<String, E> { Ok(v.to_string()) }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<String, E> { Ok(v.to_string()) }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<String, E> { Ok(v.to_string()) }
+    }
+    d.deserialize_any(V)
+}
+
+fn serialize_monitor<S>(v: &str, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    s.serialize_str(v)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BarConfig {
@@ -92,7 +127,9 @@ pub struct BarConfig {
     pub align: Align,
     /// Stacking layer: top (above windows) / bottom / background / overlay.
     pub layer: Layer,
-    pub monitor: i32,
+    /// Monitor connector name (e.g. "DP-1", "eDP-1") or "auto" for compositor choice.
+    #[serde(deserialize_with = "deserialize_monitor", serialize_with = "serialize_monitor")]
+    pub monitor: String,
     /// Continuous graph scrolling on AC (smoother, but redraws per frame).
     /// Off = stepped.
     pub smooth: bool,
@@ -111,6 +148,11 @@ pub struct BarConfig {
     /// clock/header conventionally belongs at the end rather than the start.
     #[serde(default)]
     pub reverse: bool,
+    /// Corner radius in px for the bar background. 0 = square corners.
+    pub corner_radius: i32,
+    /// Whether to round all four corners uniformly, or only the outer corners
+    /// (away from the screen edge).
+    pub corner_mode: CornerMode,
 }
 
 impl Default for BarConfig {
@@ -121,13 +163,15 @@ impl Default for BarConfig {
             length: BarLength::Full,
             align: Align::Center,
             layer: Layer::Top,
-            monitor: 0,
+            monitor: "auto".to_string(),
             smooth: true,
             smooth_battery: false,
             meter_thickness: 7,
             graph_gamma: 1.0,
             opacity: 0.88,
             reverse: false,
+            corner_radius: 0,
+            corner_mode: CornerMode::Uniform,
         }
     }
 }
@@ -276,6 +320,24 @@ pub struct PanelConfig {
     pub interval: f64,
     #[serde(default = "default_true")]
     pub graph: bool,
+    /// disk panel only: show the capacity bar + used/total text.
+    #[serde(default = "default_true")]
+    pub show_capacity: bool,
+    /// disk panel only: show cumulative read/write bytes since start.
+    #[serde(default)]
+    pub show_disk_total: bool,
+    /// cpu panel only: which core to sample. -1 = aggregate (all cores), 0 = CPU0.
+    #[serde(default = "default_core")]
+    pub core: i32,
+    /// header panel only: show hostname before the date row.
+    #[serde(default)]
+    pub show_hostname: bool,
+    /// header panel only: strip domain part from hostname (e.g. "kiwawa.local" → "kiwawa").
+    #[serde(default)]
+    pub short_hostname: bool,
+    /// header panel only: show kernel info (e.g. "Linux 7.1.1-tkg-eevdf-rt").
+    #[serde(default)]
+    pub show_kernel: bool,
     /// Show the panel's label/value header row. Off → just the graphic (e.g. a
     /// `cores` panel under `cpu` reads as one block, no repeated "CPU" header).
     #[serde(default = "default_true")]
@@ -330,6 +392,9 @@ fn default_interval() -> f64 {
 }
 fn default_true() -> bool {
     true
+}
+fn default_core() -> i32 {
+    -1
 }
 
 /// Accept either an integer or float for interval seconds.
@@ -419,8 +484,38 @@ fn default_panels() -> Vec<PanelConfig> {
         icons_only: false,
         columns: None,
         icon_size: None,
+        show_capacity: true,
+        show_disk_total: false,
+        core: -1,
+        show_hostname: false,
+        short_hostname: false,
+        show_kernel: false,
     })
     .collect()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThemeSwitcher {
+    /// Enable automatic theme switching based on desktop color scheme.
+    #[serde(default)]
+    pub auto: bool,
+    /// Theme name to use in light mode.
+    #[serde(default = "default_theme")]
+    pub light: String,
+    /// Theme name to use in dark mode.
+    #[serde(default = "default_theme")]
+    pub dark: String,
+}
+
+impl Default for ThemeSwitcher {
+    fn default() -> Self {
+        Self {
+            auto: false,
+            light: "default".into(),
+            dark: "default".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -449,6 +544,8 @@ pub struct Config {
     pub header: Vec<HeaderButton>,
     #[serde(default)]
     pub actions: Actions,
+    #[serde(default)]
+    pub theme_switch: ThemeSwitcher,
     #[serde(default = "default_panels")]
     pub panel: Vec<PanelConfig>,
 }
@@ -470,6 +567,7 @@ impl Default for Config {
             mail: MailConfig::default(),
             header: Vec::new(),
             actions: Actions::default(),
+            theme_switch: ThemeSwitcher::default(),
             panel: default_panels(),
         }
     }
@@ -624,12 +722,14 @@ thickness = 150     # px: width for vertical bars, height for horizontal
 length = "full"     # "full"/"max" to fill the edge, or a pixel count (e.g. 600)
 align = "center"    # start | center | end  (only used when length is fixed)
 layer = "top"       # top | bottom | background | overlay  (bottom = windows over bar)
-monitor = 0
+monitor = "auto"      # connector name (e.g. "DP-1", "eDP-1") or "auto"
 reverse = false     # reverse panel order (handy on horizontal bars: clock at the end)
 smooth = true       # continuous graph scrolling on AC; false = stepped (less battery)
 smooth_battery = false  # smooth scrolling while on battery (default off = no per-frame wakeups)
 graph_gamma = 1.0   # autoscaled-graph spikiness; 1.0 = ewwii, >1 sharper peaks
 opacity = 0.88      # background opacity: 0.0 transparent .. 1.0 opaque
+corner_radius = 0   # px; 0 = square corners
+corner_mode = "uniform"  # uniform | edge_aware  (edge_aware = outer corners only)
 
 [power]
 # On battery, multiply every panel's update interval by this (saves wakeups).

@@ -6,5 +6,5 @@ Comment=Battery-conscious gkrellm-style system monitor bar
 Exec=xerotop
 Icon=cc.xeron.xerotop
 Terminal=false
-Categories=System;Monitor;Utility;
+Categories=System;Monitor;
 StartupWMClass=cc.xeron.xerotop

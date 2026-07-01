@@ -4,7 +4,7 @@
 
 use crate::config::{Actions, HeaderButton, HeaderSlot, PanelConfig};
 use crate::metrics::{
-    Cpu, CpuCores, Disk, Net, Top, add_brightness, add_volume, battery, brightness, disk_usage,
+    CpuCores, Disk, Net, Top, add_brightness, add_volume, battery, brightness, disk_usage,
     gpu, keyboard_leds, loadavg, mem_detail, toggle_mute, uptime, volume,
 };
 use crate::widgets::{Bar, Cores, Graph, GraphScale, Rgba};
@@ -317,27 +317,41 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
     match cfg.kind.as_str() {
         "header" => {
             let (tf, df) = clock_fmts();
-            Some(header_panel(iv, tf, df, actions))
+            Some(header_panel(iv, tf, df, actions, cfg.show_hostname, cfg.short_hostname, cfg.show_kernel))
         }
         "clock" => {
             let (tf, df) = clock_fmts();
             Some(clock_panel(iv, tf, df))
         }
-        "cpu" => Some(metric_panel(
-            "CPU",
-            iv,
-            cfg.graph,
-            pal().green,
-            smooth,
-            GraphScale::DynamicRange,
-            {
-                let cpu = Rc::new(RefCell::new(Cpu::new()));
-                move || {
-                    let p = cpu.borrow_mut().sample();
-                    (format!("{p:.0}%"), p)
-                }
-            },
-        )),
+        "cpu" => {
+            let name = if cfg.core < 0 {
+                "CPU".to_string()
+            } else {
+                format!("CPU{}", cfg.core)
+            };
+            Some(metric_panel(
+                &name,
+                iv,
+                cfg.graph,
+                pal().green,
+                smooth,
+                GraphScale::DynamicRange,
+                {
+                    let cores = Rc::new(RefCell::new(CpuCores::new()));
+                    let target = cfg.core;
+                    move || {
+                        let v = cores.borrow_mut().sample();
+                        let p = if target < 0 {
+                            let n = v.len().max(1);
+                            v.iter().sum::<f64>() / n as f64
+                        } else {
+                            v.get(target as usize).copied().unwrap_or(0.0)
+                        };
+                        (format!("{p:.0}%"), p)
+                    }
+                },
+            ))
+        },
         "memory" => Some(mem_panel(iv, cfg.graph, smooth)),
         "sensors" => Some(temp_panel(iv, cfg.graph, smooth)),
         "cores" => Some(cores_panel(iv)),
@@ -351,7 +365,7 @@ pub fn build(cfg: &PanelConfig, smooth: bool, actions: &Actions) -> Option<Panel
             cfg.columns.unwrap_or(1).max(1),
         )),
         "gpu" => Some(gpu_panel(iv, cfg.graph, smooth)),
-        "disk" => Some(disk_panel(iv, cfg.graph, smooth)),
+        "disk" => Some(disk_panel(iv, cfg.graph, smooth, cfg.show_capacity, cfg.show_disk_total)),
         "net" => Some(net_panel(
             iv,
             cfg.graph,
@@ -1162,21 +1176,42 @@ fn gpu_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
     }
 }
 
-fn disk_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
+fn fmt_rate(kb_s: f64) -> String {
+    let b = kb_s * 1024.0;
+    if b < 1024.0 {
+        format!("{:.0}", b)
+    } else if b < 20480.0 {
+        format!("{:.1}K", b / 1024.0)
+    } else if b < 1_048_576.0 {
+        format!("{:.0}K", b / 1024.0)
+    } else if b < 20_971_520.0 {
+        format!("{:.1}M", b / 1_048_576.0)
+    } else {
+        format!("{:.0}M", b / 1_048_576.0)
+    }
+}
+
+fn disk_panel(interval: f64, graph: bool, smooth: bool, show_capacity: bool, show_disk_total: bool) -> Panel {
     let root = panel_box();
     let (row, val) = header("DISK");
     root.append(&row);
     // Usage level bar + the used/total text on one row, so capacity reads at a
     // glance instead of only as "38G/1023G".
-    let usage_row = GtkBox::new(Orientation::Horizontal, 6);
-    let usage_bar = Bar::new(0, bar_h(), 100.0, pal().cyan);
-    meter_fill(&usage_bar.area);
-    usage_bar.area.set_valign(gtk::Align::Center);
-    let usage = sub();
-    usage.set_hexpand(false);
-    usage_row.append(&usage_bar.area);
-    usage_row.append(&usage);
-    root.append(&usage_row);
+    let usage_bar = show_capacity.then(|| {
+        let usage_row = GtkBox::new(Orientation::Horizontal, 6);
+        let bar = Bar::new(0, bar_h(), 100.0, pal().cyan);
+        meter_fill(&bar.area);
+        bar.area.set_valign(gtk::Align::Center);
+        let label = sub();
+        label.set_hexpand(false);
+        usage_row.append(&bar.area);
+        usage_row.append(&label);
+        root.append(&usage_row);
+        (bar, label)
+    });
+    if !show_capacity {
+        val.set_text("");
+    }
     let rd = graph_widget(
         &root,
         MINI_H,
@@ -1195,14 +1230,25 @@ fn disk_panel(interval: f64, graph: bool, smooth: bool) -> Panel {
         smooth,
         graph,
     );
+    let total_row = show_disk_total.then(|| {
+        let l = sub();
+        l.set_hexpand(false);
+        root.append(&l);
+        l
+    });
     let disk = Rc::new(RefCell::new(Disk::new()));
     let update = Box::new(move || {
-        if let Some((pct, used, total)) = disk_usage() {
-            val.set_text(&format!("{pct:.0}%"));
-            usage.set_text(&format!("{used:.0}G/{total:.0}G"));
-            usage_bar.set(pct);
+        if let Some((ref bar, ref label)) = usage_bar {
+            if let Some((pct, used, total)) = disk_usage() {
+                val.set_text(&format!("{pct:.0}%"));
+                label.set_text(&format!("{used:.0}G/{total:.0}G"));
+                bar.set(pct);
+            }
         }
         let (r, w) = disk.borrow_mut().sample();
+        if let Some(ref l) = total_row {
+            l.set_text(&format!("R:{} W:{}", fmt_rate(r), fmt_rate(w)));
+        }
         if let Some(g) = &rd {
             g.push(&[r]);
         }
@@ -2598,7 +2644,7 @@ fn header_button(icon: &str, command: &str, color: &str, actions: &Actions) -> g
     btn
 }
 
-fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Actions) -> Panel {
+fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Actions, show_hostname: bool, short_hostname: bool, show_kernel: bool) -> Panel {
     let root = panel_box();
     root.add_css_class("clock");
 
@@ -2646,6 +2692,34 @@ fn header_panel(interval: f64, time_fmt: String, date_fmt: String, actions: &Act
 
     root.append(&time_row);
     root.append(&date_row);
+
+    // Hostname row
+    if show_hostname {
+        let row = gtk::CenterBox::new();
+        let raw = std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let host = if short_hostname {
+            raw.split('.').next().unwrap_or(&raw).to_string()
+        } else {
+            raw
+        };
+        let l = sub();
+        l.set_text(&host);
+        row.set_center_widget(Some(&l));
+        root.append(&row);
+    }
+    // Kernel version row
+    if show_kernel {
+        let row = gtk::CenterBox::new();
+        let os = std::fs::read_to_string("/proc/sys/kernel/ostype").unwrap_or_default();
+        let rel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
+        let l = sub();
+        l.set_text(&format!("{} {}", os.trim(), rel.trim()));
+        row.set_center_widget(Some(&l));
+        root.append(&row);
+    }
 
     let update = Box::new(move || {
         set_clock_time(&time, &ampm, &time_fmt);

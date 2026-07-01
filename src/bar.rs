@@ -50,18 +50,21 @@ fn edges(edge: Edge) -> (LsEdge, LsEdge, LsEdge, LsEdge) {
     }
 }
 
-/// The monitor the bar targets (configured index, else the first), for geometry.
+/// The monitor the bar targets (by connector name, else the first), for geometry.
 fn target_monitor(cfg: &Config) -> Option<gtk::gdk::Monitor> {
     let monitors = gtk::gdk::Display::default()?.monitors();
-    let idx = if cfg.bar.monitor >= 0 {
-        cfg.bar.monitor as u32
-    } else {
-        0
-    };
-    monitors
-        .item(idx)
-        .and_downcast::<gtk::gdk::Monitor>()
-        .or_else(|| monitors.item(0).and_downcast::<gtk::gdk::Monitor>())
+    let n = monitors.n_items();
+    if cfg.bar.monitor != "auto" {
+        for i in 0..n {
+            if let Some(m) = monitors.item(i).and_downcast::<gtk::gdk::Monitor>() {
+                if m.connector().as_deref() == Some(&cfg.bar.monitor) {
+                    return Some(m);
+                }
+            }
+        }
+    }
+    // Fall back to the first monitor for geometry.
+    (0..n).find_map(|i| monitors.item(i).and_downcast::<gtk::gdk::Monitor>())
 }
 
 impl BarHandle {
@@ -82,7 +85,14 @@ impl BarHandle {
         if let Some(v) = cfg.font.large {
             eff.font_large = v;
         }
-        self.theme_css.load_from_data(&eff.css(cfg.bar.opacity));
+        self.theme_css.load_from_data(&eff.css(cfg.bar.opacity, cfg.bar.corner_radius, cfg.bar.corner_mode, cfg.bar.edge));
+        // Clip children to the rounded bar corners (must be done programmatically
+        // — GTK4 CSS has no "overflow" property).
+        self.root.set_overflow(if cfg.bar.corner_radius > 0 {
+            gtk::Overflow::Hidden
+        } else {
+            gtk::Overflow::Visible
+        });
     }
 
     /// Apply window geometry: monitor, stacking layer, edge/anchors, thickness,
@@ -91,10 +101,10 @@ impl BarHandle {
     pub fn relayout(&self) {
         let cfg = self.cfg.borrow();
         let monitor = target_monitor(&cfg);
-        // Pin to the configured output if requested; monitor < 0 = compositor's
-        // choice (but we still use the first output's geometry for full length).
+        // Pin to the configured output if requested; "auto" = compositor's choice
+        // (but we still use the first output's geometry for full length).
         // Clear any previous pin on the auto path so it actually unpins live.
-        if cfg.bar.monitor >= 0
+        if cfg.bar.monitor != "auto"
             && let Some(m) = &monitor
         {
             self.window.set_monitor(Some(m));
@@ -145,7 +155,11 @@ impl BarHandle {
             self.root.set_height_request(length_px);
             self.root.set_orientation(Orientation::Vertical);
         }
-        self.window.auto_exclusive_zone_enable();
+        // Only reserve compositor space on Top/Overlay layers so Bottom and
+        // Background bars don't prevent windows from maximizing over them.
+        if matches!(cfg.bar.layer, Layer::Top | Layer::Overlay) {
+            self.window.auto_exclusive_zone_enable();
+        }
     }
 
     /// Live-apply only the mail config (command / dir / interval). No panel
@@ -222,7 +236,9 @@ impl BarHandle {
         // On AC<->battery flips, toggle smooth scrolling on the existing graphs
         // in place (no rebuild → graph history is preserved).
         let was_battery = Rc::new(Cell::new(on_battery));
+        let handle = self.clone();
         glib::timeout_add_local(Duration::from_millis(250), move || {
+            handle.relayout();
             if gen_cell.get() != generation {
                 return glib::ControlFlow::Break;
             }
@@ -278,6 +294,16 @@ pub fn build(app: &Application, cfg: Config) -> BarHandle {
         generation: Rc::new(Cell::new(0)),
     };
     handle.apply();
+    // React to monitor hotplug: re-pin the bar when outputs change.
+    if let Some(display) = gtk::gdk::Display::default() {
+        let h = handle.clone();
+        display.monitors().connect_items_changed(move |_, _, removed, added| {
+            if removed > 0 || added > 0 {
+                h.relayout();
+                h.window.present();
+            }
+        });
+    }
     install_context_menu(&handle, &root);
     window.present();
     handle

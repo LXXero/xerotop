@@ -5,9 +5,10 @@
 
 use crate::bar::BarHandle;
 use crate::config::{
-    Align, BarLength, Edge, HeaderButton, HeaderSlot, Layer, PanelConfig, TempSensor,
+    Align, BarLength, CornerMode, Edge, HeaderButton, HeaderSlot, Layer, PanelConfig, TempSensor,
 };
 use crate::theme::{Theme, themes_dir};
+use crate::theme_switch;
 use gtk::gdk::RGBA;
 use gtk::glib;
 use gtk::pango::FontDescription;
@@ -15,7 +16,7 @@ use gtk::prelude::*;
 use gtk::{
     Box as GtkBox, Button, CheckButton, ColorDialog, ColorDialogButton, DropDown, Entry,
     FontDialog, FontDialogButton, Label, ListBox, ListItem, Notebook, Orientation, Scale,
-    SignalListItemFactory, SpinButton, StringObject, Switch, Window,
+    SignalListItemFactory, SpinButton, StringList, StringObject, Switch, Window,
 };
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -23,6 +24,18 @@ use std::rc::Rc;
 thread_local! {
     /// The single live prefs window, if open.
     static WINDOW: RefCell<Option<Window>> = const { RefCell::new(None) };
+    /// Callback invoked when the theme is changed externally (e.g. by the desktop
+    /// colour-scheme auto-switcher) so the open prefs window can refresh its widgets.
+    static THEME_CHANGED_CB: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+}
+
+/// Notify the open prefs window that the theme was changed externally.
+pub fn theme_changed() {
+    THEME_CHANGED_CB.with(|cb| {
+        if let Some(f) = cb.borrow().as_ref() {
+            f();
+        }
+    });
 }
 
 const PANEL_TYPES: [&str; 19] = [
@@ -78,6 +91,7 @@ pub fn open(handle: &BarHandle) {
         .build();
     window.connect_close_request(|_| {
         WINDOW.with(|w| *w.borrow_mut() = None);
+        THEME_CHANGED_CB.with(|cb| *cb.borrow_mut() = None);
         glib::Propagation::Proceed
     });
     WINDOW.with(|w| *w.borrow_mut() = Some(window.clone()));
@@ -279,14 +293,53 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     page.append(&row("Align (if fixed)", &align));
 
     // Monitor
-    let mon = SpinButton::with_range(-1.0, 16.0, 1.0);
-    mon.set_value(cfg.bar.monitor as f64);
+    let mon_store = StringList::new(&[]);
+    mon_store.append("auto");
+    if let Some(display) = gtk::gdk::Display::default() {
+        let ml = display.monitors();
+        for i in 0..ml.n_items() {
+            if let Some(m) = ml.item(i).and_downcast::<gtk::gdk::Monitor>() {
+                let name = m
+                    .connector()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("Monitor {i}"));
+                mon_store.append(&name);
+            }
+        }
+    }
+    let expr = gtk::PropertyExpression::new(
+        StringObject::static_type(),
+        None::<gtk::Expression>,
+        "string",
+    );
+    let mon_dd = DropDown::new(Some(mon_store.clone()), Some(expr));
+    let pos = if cfg.bar.monitor == "auto" {
+        0
+    } else {
+        let mut found = 0;
+        for i in 1..mon_store.n_items() {
+            if mon_store.string(i).as_deref() == Some(&cfg.bar.monitor) {
+                found = i;
+                break;
+            }
+        }
+        found
+    };
+    mon_dd.set_selected(pos);
     let h = handle.clone();
-    mon.connect_value_changed(move |s| {
-        h.cfg.borrow_mut().bar.monitor = s.value() as i32;
+    mon_dd.connect_selected_notify(move |dd| {
+        let idx = dd.selected();
+        let name = if idx == 0 {
+            "auto".to_string()
+        } else if let Some(s) = mon_store.string(idx) {
+            s.to_string()
+        } else {
+            return;
+        };
+        h.cfg.borrow_mut().bar.monitor = name;
         h.relayout();
     });
-    page.append(&row("Monitor (-1 = auto)", &mon));
+    page.append(&row("Monitor", &mon_dd));
 
     // Stacking layer
     let layer = DropDown::from_strings(&["background", "bottom", "top", "overlay"]);
@@ -313,7 +366,7 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     opacity.set_value(cfg.bar.opacity);
     opacity.set_hexpand(true);
     opacity.set_draw_value(true);
-    opacity.set_size_request(180, -1);
+    opacity.set_size_request(180, 36);
     let h = handle.clone();
     opacity.connect_value_changed(move |s| {
         h.cfg.borrow_mut().bar.opacity = s.value();
@@ -326,7 +379,7 @@ fn general_page(handle: &BarHandle) -> GtkBox {
     gamma.set_value(cfg.bar.graph_gamma);
     gamma.set_hexpand(true);
     gamma.set_draw_value(true);
-    gamma.set_size_request(180, -1);
+    gamma.set_size_request(180, 36);
     let h = handle.clone();
     gamma.connect_value_changed(move |s| {
         h.cfg.borrow_mut().bar.graph_gamma = s.value();
@@ -343,6 +396,32 @@ fn general_page(handle: &BarHandle) -> GtkBox {
         h.apply();
     });
     page.append(&row("Meter bar thickness (px)", &meter_h));
+
+    // Corner radius
+    let corner_r = SpinButton::with_range(0.0, 30.0, 1.0);
+    corner_r.set_value(cfg.bar.corner_radius as f64);
+    let h = handle.clone();
+    corner_r.connect_value_changed(move |s| {
+        h.cfg.borrow_mut().bar.corner_radius = s.value() as i32;
+        h.restyle();
+    });
+    page.append(&row("Corner radius (px)", &corner_r));
+
+    // Corner mode
+    let corner_mode = DropDown::from_strings(&["uniform", "edge aware"]);
+    corner_mode.set_selected(match cfg.bar.corner_mode {
+        CornerMode::Uniform => 0,
+        CornerMode::EdgeAware => 1,
+    });
+    let h = handle.clone();
+    corner_mode.connect_selected_notify(move |d| {
+        h.cfg.borrow_mut().bar.corner_mode = match d.selected() {
+            1 => CornerMode::EdgeAware,
+            _ => CornerMode::Uniform,
+        };
+        h.restyle();
+    });
+    page.append(&row("Corner mode", &corner_mode));
 
     // Smooth scroll — separate switches for AC vs battery (battery off = no
     // per-frame wakeups). The bar rebuilds on AC<->battery to apply the change.
@@ -395,6 +474,69 @@ fn general_page(handle: &BarHandle) -> GtkBox {
         h.apply();
     });
     page.append(&row("On-battery interval ×", &mult));
+
+    // --- Desktop colour-scheme auto-switch ---
+    let names = theme_names();
+    let auto = CheckButton::with_label("Follow desktop colour scheme");
+    auto.set_active(cfg.theme_switch.auto);
+    page.append(&auto);
+
+    // Light-theme dropdown.
+    let light = DropDown::from_strings(&names.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+    let cur_light = names
+        .iter()
+        .position(|n| *n == cfg.theme_switch.light)
+        .unwrap_or(0);
+    light.set_selected(cur_light as u32);
+    light.set_sensitive(cfg.theme_switch.auto);
+    let h = handle.clone();
+    light.connect_selected_notify(move |d| {
+        let Some(name) = d
+            .selected_item()
+            .and_downcast::<gtk::StringObject>()
+            .map(|o| o.string().to_string())
+        else {
+            return;
+        };
+        h.cfg.borrow_mut().theme_switch.light = name;
+    });
+    page.append(&row("Light theme", &light));
+
+    // Dark-theme dropdown.
+    let dark = DropDown::from_strings(&names.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+    let cur_dark = names
+        .iter()
+        .position(|n| *n == cfg.theme_switch.dark)
+        .unwrap_or(0);
+    dark.set_selected(cur_dark as u32);
+    dark.set_sensitive(cfg.theme_switch.auto);
+    let h = handle.clone();
+    dark.connect_selected_notify(move |d| {
+        let Some(name) = d
+            .selected_item()
+            .and_downcast::<gtk::StringObject>()
+            .map(|o| o.string().to_string())
+        else {
+            return;
+        };
+        h.cfg.borrow_mut().theme_switch.dark = name;
+    });
+    page.append(&row("Dark theme", &dark));
+
+    // Wire the checkbox to toggle dropdown sensitivity.
+    auto.connect_toggled({
+        let h = handle.clone();
+        let light = light.clone();
+        let dark = dark.clone();
+        move |c| {
+            h.cfg.borrow_mut().theme_switch.auto = c.is_active();
+            light.set_sensitive(c.is_active());
+            dark.set_sensitive(c.is_active());
+            if c.is_active() {
+                theme_switch::sync_once(&h);
+            }
+        }
+    });
 
     drop(cfg);
     page.append(&save_bar(handle));
@@ -602,7 +744,7 @@ type Setter = fn(&mut Theme, String);
 // one needs a full rebuild; the rest are pure CSS and only need a restyle (no
 // rebuild → graph history survives).
 #[allow(clippy::type_complexity)]
-const COLOR_FIELDS: [(&str, Getter, Setter, bool); 10] = [
+const COLOR_FIELDS: [(&str, Getter, Setter, bool); 11] = [
     (
         "Background",
         |t| t.background.clone(),
@@ -636,6 +778,12 @@ const COLOR_FIELDS: [(&str, Getter, Setter, bool); 10] = [
         "Keyboard LED",
         |t| t.led_on.clone(),
         |t, v| t.led_on = v,
+        false,
+    ),
+    (
+        "Graph background",
+        |t| t.graph_background.clone(),
+        |t, v| t.graph_background = v,
         false,
     ),
 ];
@@ -742,6 +890,24 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
     }
     page.append(&grid);
 
+    // Graph background opacity
+    let gb_opacity = Scale::with_range(Orientation::Horizontal, 0.0, 1.0, 0.01);
+    gb_opacity.set_value(handle.theme.borrow().graph_background_opacity);
+    gb_opacity.set_hexpand(true);
+    gb_opacity.set_draw_value(true);
+    gb_opacity.set_size_request(180, 36);
+    let h = handle.clone();
+    let ld = loading.clone();
+    gb_opacity.connect_value_changed(move |s| {
+        if ld.get() {
+            return;
+        }
+        h.theme.borrow_mut().graph_background_opacity = s.value();
+        h.restyle();
+    });
+    let gb_opacity_c = gb_opacity.clone();
+    page.append(&row("Graph bg opacity", &gb_opacity));
+
     // Loading a theme: resolve the file, swap it in, refresh every widget.
     let h = handle.clone();
     let buttons_c = buttons.clone();
@@ -749,6 +915,9 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
     let (fs_c, fn_c, fl_c) = (f_small.clone(), f_normal.clone(), f_large.clone());
     let ld = loading.clone();
     selector.connect_selected_notify(move |d| {
+        if ld.get() {
+            return;
+        }
         // Read the name from the model object, not a captured Vec — the model is
         // rebuilt on "Save theme as…", so a stale index could panic.
         let Some(name) = d
@@ -774,6 +943,7 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
         fs_c.set_value(t.font_small as f64);
         fn_c.set_value(t.font_normal as f64);
         fl_c.set_value(t.font_large as f64);
+        gb_opacity_c.set_value(t.graph_background_opacity);
         for (get, btn) in buttons_c.borrow().iter() {
             btn.set_rgba(&hex_to_rgba(&get(&t)));
         }
@@ -850,6 +1020,42 @@ fn theme_page(handle: &BarHandle) -> GtkBox {
     save_row.append(&save_theme);
     save_row.append(&save_panels);
     page.append(&save_row);
+
+    // Register a callback so the prefs widgets refresh when the theme changes
+    // externally (desktop colour-scheme auto-switcher).
+    {
+        let names = theme_names();
+        let selector = selector.clone();
+        let ld = loading.clone();
+        let font_c = font_btn.clone();
+        let fs_c = f_small.clone();
+        let fn_c = f_normal.clone();
+        let fl_c = f_large.clone();
+        let gb_opacity_c = gb_opacity.clone();
+        let buttons_c = buttons.clone();
+        let h = handle.clone();
+        THEME_CHANGED_CB.with(|cb| {
+            *cb.borrow_mut() = Some(Box::new(move || {
+                let cur = h.cfg.borrow().theme.clone();
+                let Some(pos) = names.iter().position(|n| *n == cur) else {
+                    return;
+                };
+                ld.set(true);
+                selector.set_selected(pos as u32);
+                let t = h.theme.borrow();
+                font_c.set_font_desc(&FontDescription::from_string(&t.font_family));
+                fs_c.set_value(t.font_small as f64);
+                fn_c.set_value(t.font_normal as f64);
+                fl_c.set_value(t.font_large as f64);
+                gb_opacity_c.set_value(t.graph_background_opacity);
+                for (get, btn) in buttons_c.borrow().iter() {
+                    btn.set_rgba(&hex_to_rgba(&get(&t)));
+                }
+                drop(t);
+                ld.set(false);
+            }));
+        });
+    }
 
     page.append(&save_bar(handle));
     page
@@ -937,6 +1143,12 @@ fn layout_page(handle: &BarHandle) -> GtkBox {
             icons_only: false,
             columns: None,
             icon_size: None,
+            show_capacity: true,
+            show_disk_total: false,
+            core: -1,
+            show_hostname: false,
+            short_hostname: false,
+            show_kernel: false,
         });
         h.apply();
         populate_panels(&h, &list_c);
@@ -1598,6 +1810,48 @@ fn header_detail(handle: &BarHandle, i: usize) -> GtkBox {
         |p, v| p.date_format = v,
     ));
 
+    // Show hostname
+    let hh = CheckButton::with_label("Show hostname");
+    hh.set_active(handle.cfg.borrow().panel[i].show_hostname);
+    {
+        let h = handle.clone();
+        hh.connect_toggled(move |c| {
+            if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                p.show_hostname = c.is_active();
+            }
+            h.apply();
+        });
+    }
+    page.append(&hh);
+
+    // Short hostname
+    let sh = CheckButton::with_label("Short hostname (strip domain)");
+    sh.set_active(handle.cfg.borrow().panel[i].short_hostname);
+    {
+        let h = handle.clone();
+        sh.connect_toggled(move |c| {
+            if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                p.short_hostname = c.is_active();
+            }
+            h.apply();
+        });
+    }
+    page.append(&sh);
+
+    // Show kernel
+    let hk = CheckButton::with_label("Show kernel version");
+    hk.set_active(handle.cfg.borrow().panel[i].show_kernel);
+    {
+        let h = handle.clone();
+        hk.connect_toggled(move |c| {
+            if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                p.show_kernel = c.is_active();
+            }
+            h.apply();
+        });
+    }
+    page.append(&hk);
+
     let sep = Label::new(Some(
         "Icons — a glyph + command per slot. '@menu' = power popover; blank = none.",
     ));
@@ -1882,6 +2136,45 @@ fn panel_detail(handle: &BarHandle, i: usize) -> GtkBox {
             page.append(&hr);
             page
         }
+        "disk" => {
+            let page = generic_detail(handle, i, "disk");
+            let cb = CheckButton::with_label("Show capacity (usage bar + used/total)");
+            cb.set_active(handle.cfg.borrow().panel[i].show_capacity);
+            let h = handle.clone();
+            cb.connect_toggled(move |c| {
+                if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                    p.show_capacity = c.is_active();
+                }
+                h.apply();
+            });
+            page.append(&cb);
+            let cb = CheckButton::with_label("Show R/W rate");
+            cb.set_active(handle.cfg.borrow().panel[i].show_disk_total);
+            let h = handle.clone();
+            cb.connect_toggled(move |c| {
+                if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                    p.show_disk_total = c.is_active();
+                }
+                h.apply();
+            });
+            page.append(&cb);
+            page
+        }
+        "cpu" => {
+            let page = generic_detail(handle, i, "cpu");
+            let s = SpinButton::with_range(-1.0, 255.0, 1.0);
+            s.set_width_chars(5);
+            s.set_value(handle.cfg.borrow().panel[i].core as f64);
+            let h = handle.clone();
+            s.connect_value_changed(move |s| {
+                if let Some(p) = h.cfg.borrow_mut().panel.get_mut(i) {
+                    p.core = s.value() as i32;
+                }
+                h.apply();
+            });
+            page.append(&row("Core (-1 = all, 0 = CPU0, 1 = CPU1, …)", &s));
+            page
+        }
         "uptime" => {
             let page = page_box();
             page.append(&interval_row(handle, i));
@@ -1917,9 +2210,8 @@ fn ensure_prefs_css() {
     provider.load_from_data(
         ".panel-master, .panel-master:backdrop {\
            background-color: rgba(255,255,255,0.045);\
-           border-right: 1px solid rgba(255,255,255,0.09); }\
-         .panel-idx { font-family: monospace; color: rgba(255,255,255,0.45); }\
-         .drag-handle { color: rgba(255,255,255,0.30); }",
+           border-right: 1px solid rgba(128,128,128,0.15); }\
+         .panel-idx { font-family: monospace; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(

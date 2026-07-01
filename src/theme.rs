@@ -4,7 +4,7 @@
 //! `~/.config/xerotop/themes/<name>.toml`; the built-in default reproduces the
 //! original dark look.
 
-use crate::config::{HeaderButton, TempSensor};
+use crate::config::{CornerMode, Edge, HeaderButton, TempSensor};
 use crate::widgets::Rgba;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -36,6 +36,10 @@ pub struct Theme {
     pub violet: String,
     /// Keyboard-LED "on"/glow color.
     pub led_on: String,
+    /// Graph background fill (hex `#rrggbb`).
+    pub graph_background: String,
+    /// Graph background fill opacity 0.0 .. 1.0.
+    pub graph_background_opacity: f64,
     // Optional panel-color defaults the theme can carry. Written only by the
     // "Save + panel colors" button; when present, an interactive theme switch
     // applies them to the config (so a theme can capture a full look, not just
@@ -65,6 +69,8 @@ impl Default for Theme {
             red: "#ff7366".into(),
             violet: "#c78cff".into(),
             led_on: "#5fd75f".into(),
+            graph_background: "#000000".into(),
+            graph_background_opacity: 0.25,
             sensors: None,
             header: None,
         }
@@ -120,7 +126,7 @@ impl Theme {
     /// Generate the full stylesheet. `opacity` (from config) sets the bar's
     /// background alpha. Structural rules (padding, sizes) are constant; colors
     /// and the font come from the theme.
-    pub fn css(&self, opacity: f64) -> String {
+    pub fn css(&self, opacity: f64, corner_radius: i32, corner_mode: CornerMode, edge: Edge) -> String {
         let (br, bg_, bb) = parse_hex(&self.background);
         let bar_bg = format!("rgba({br},{bg_},{bb},{:.3})", opacity.clamp(0.0, 1.0));
         let icon = lighten(&self.label, 0.12);
@@ -133,6 +139,19 @@ impl Theme {
             format!("#{r:02x}{g:02x}{b:02x}")
         };
         let font = sanitize_font(&self.font_family);
+        let (gr, gg, gb) = parse_hex(&self.graph_background);
+        let graph_bg = format!("rgba({gr},{gg},{gb},{:.3})", self.graph_background_opacity.clamp(0.0, 1.0));
+        let cr = corner_radius.max(0);
+        let (tl, tr, bl, br) = if cr == 0 || corner_mode == CornerMode::Uniform {
+            (cr, cr, cr, cr)
+        } else {
+            match edge {
+                Edge::Left => (0, cr, 0, cr),
+                Edge::Right => (cr, 0, cr, 0),
+                Edge::Top => (0, 0, cr, cr),
+                Edge::Bottom => (cr, cr, 0, 0),
+            }
+        };
         format!(
             r#"
 /* The bar window must be transparent, or our semi-transparent .bar fill
@@ -140,59 +159,59 @@ impl Theme {
    desktop showing through. Scoped to .xerotop so the prefs window (same display,
    shares this provider) stays opaque. */
 window.xerotop {{ background-color: transparent; }}
-.bar {{ font-family: "{font}", monospace; font-size: {normal}px; background-color: {bar_bg}; padding: 6px; }}
-.panel {{ padding: 0 4px; }}
-.meter {{ padding: 1px 4px; }}
-.rule {{ background-color: rgba(255,255,255,0.12); min-height: 1px; min-width: 1px; margin: 2px 0; }}
+.xerotop .bar {{ font-family: "{font}", monospace; font-size: {normal}px; background-color: {bar_bg}; padding: 6px; border-top-left-radius: {tl}px; border-top-right-radius: {tr}px; border-bottom-left-radius: {bl}px; border-bottom-right-radius: {br}px; }}
+.xerotop .panel {{ padding: 0 4px; }}
+.xerotop .meter {{ padding: 1px 4px; }}
+.xerotop .rule {{ background-color: rgba(255,255,255,0.12); min-height: 1px; min-width: 1px; margin: 2px 0; }}
 /* glyph picker in prefs must use the bar font (default-font prefs window has no
    Nerd Font glyphs) and a larger size so the little glyphs are legible */
-.glyphpick, .glyphpick * {{ font-family: "{font}", monospace; }}
-.label {{ font-weight: bold; color: {label}; }}
+.xerotop .glyphpick, .xerotop .glyphpick * {{ font-family: "{font}", monospace; }}
+.xerotop .label {{ font-weight: bold; color: {label}; }}
 /* tabular (fixed-width) digits so a changing number keeps the same glyph
    advance — combined with width_chars on the value labels, a value update is
    an in-place repaint instead of a width change that relayouts the bar. */
-.value {{ color: {value}; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
-.meter-icon {{ color: {icon}; font-size: 20px; }}
+.xerotop .value {{ color: {value}; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
+.xerotop .meter-icon {{ color: {icon}; font-size: 20px; }}
 /* the hourglass fills its em more than the FA glyphs — trim it to match. */
-.uptime-icon {{ font-size: 16px; }}
+.xerotop .uptime-icon {{ font-size: 16px; }}
 /* weather (nf-weather e3xx) glyphs render smaller per-em, so bump the font to
    match the meter/keyboard glyphs' visual size; the negative margins claw back
    the line-box padding the bigger font adds, so the weather row stays the same
    height as the meter rows instead of growing. */
-.weather-icon {{ color: {icon}; font-size: 30px; margin-top: -6px; margin-bottom: -6px; }}
-.mail-icon {{ color: #e6f0ff; font-size: 20px; }}
-.mail-unread {{ color: #ffbf4d; font-weight: bold; }}
-.graph {{ background-color: rgba(0,0,0,0.25); }}
-.bar-meter {{ background-color: transparent; }}
-.sub {{ font-size: {small}px; color: {muted}; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
-.task {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; padding: 1px 3px; font-size: {small}px; color: {label}; }}
-.task:hover {{ color: {value}; }}
-.task-active {{ background-color: rgba(255,255,255,0.10); color: {bright}; }}
-.task-min {{ color: {muted}; font-style: italic; background-color: rgba(255,255,255,0.03); border-radius: 4px; }}
-.tray-item {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; min-width: 0; padding: 2px; }}
-.tray-item:hover {{ background-color: rgba(255,255,255,0.10); }}
-.clock-time {{ font-weight: bold; font-size: {large}px; color: {label}; }}
-.clock-ampm {{ font-size: {small}px; color: {value}; }}
-.clock-date {{ font-size: {small}px; color: {value}; }}
+.xerotop .weather-icon {{ color: {icon}; font-size: 30px; margin-top: -6px; margin-bottom: -6px; }}
+.xerotop .mail-icon {{ color: #e6f0ff; font-size: 20px; }}
+.xerotop .mail-unread {{ color: #ffbf4d; font-weight: bold; }}
+.xerotop .graph {{ background-color: {graph_bg}; }}
+.xerotop .bar-meter {{ background-color: transparent; }}
+.xerotop .sub {{ font-size: {small}px; color: {muted}; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
+.xerotop .task {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; padding: 1px 3px; font-size: {small}px; color: {label}; }}
+.xerotop .task:hover {{ color: {value}; }}
+.xerotop .task-active {{ background-color: rgba(255,255,255,0.10); color: {bright}; }}
+.xerotop .task-min {{ color: {muted}; font-style: italic; background-color: rgba(255,255,255,0.03); border-radius: 4px; }}
+.xerotop .tray-item {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; min-width: 0; padding: 2px; }}
+.xerotop .tray-item:hover {{ background-color: rgba(255,255,255,0.10); }}
+.xerotop .clock-time {{ font-weight: bold; font-size: {large}px; color: {label}; }}
+.xerotop .clock-ampm {{ font-size: {small}px; color: {value}; }}
+.xerotop .clock-date {{ font-size: {small}px; color: {value}; }}
 /* reserve the header-glyph height so enabling a date icon doesn't grow the row */
-.date-row {{ min-height: 20px; }}
+.xerotop .date-row {{ min-height: 20px; }}
 /* keyboard indicators drawn as little rectangular LEDs: dim when off, glowing
    green when the function is active, with the label etched inside. */
-.led {{
+.xerotop .led {{
   font-size: {small}px; font-weight: bold; padding: 0 3px; min-height: 11px;
   border-radius: 2px; border: 1px solid rgba(255,255,255,0.15);
   background-color: rgba(255,255,255,0.04); color: {muted};
 }}
-.led-on {{
+.xerotop .led-on {{
   color: #06140a; background-color: {led}; border-color: {led_border};
   box-shadow: 0 0 5px 1px {led};
 }}
-.clock-daynum {{ font-weight: bold; font-size: {normal}px; color: {label}; }}
-.hbtn {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; min-width: 0; padding: 0 4px; color: {label}; font-size: 17px; }}
-.hbtn:hover {{ color: {bright}; }}
-.menu {{ padding: 4px; }}
-.menu-item {{ background: transparent; border: none; box-shadow: none; color: {value}; padding: 4px 14px; }}
-.menu-item:hover {{ background-color: rgba(255,255,255,0.10); }}
+.xerotop .clock-daynum {{ font-weight: bold; font-size: {normal}px; color: {label}; }}
+.xerotop .hbtn {{ background: transparent; border: none; box-shadow: none; outline: none; min-height: 0; min-width: 0; padding: 0 4px; color: {label}; font-size: 17px; }}
+.xerotop .hbtn:hover {{ color: {bright}; }}
+.xerotop .menu {{ padding: 4px; }}
+.xerotop .menu-item {{ background: transparent; border: none; box-shadow: none; padding: 4px 14px; }}
+.xerotop .menu-item:hover {{ background-color: rgba(255,255,255,0.10); }}
 "#,
             font = font,
             small = self.font_small.clamp(4, 96),
@@ -280,7 +299,7 @@ mod tests {
 
     #[test]
     fn css_is_scoped_and_embeds_opacity_font_sizes() {
-        let css = Theme::default().css(0.5);
+        let css = Theme::default().css(0.5, 0, CornerMode::Uniform, Edge::Right);
         assert!(
             css.contains("window.xerotop"),
             "transparent rule must be scoped"
@@ -298,7 +317,7 @@ mod tests {
             ..Theme::default()
         };
         assert!(
-            t.css(1.0).contains("#808080"),
+            t.css(1.0, 0, CornerMode::Uniform, Edge::Right).contains("#808080"),
             "bad color normalized to grey"
         );
     }
