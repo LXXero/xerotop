@@ -12,6 +12,9 @@ makedepends=('git' 'cargo')
 optdepends=('brightnessctl: brightness panel adjustment')
 provides=('xerotop')
 conflicts=('xerotop')
+# ring (crypto dep via the weather HTTPS fetch) ships non-LTO asm; LTO breaks
+# its symbol resolution at link time.
+options=('!lto')
 source=("git+https://github.com/LXXero/xerotop.git")
 sha256sums=('SKIP')
 
