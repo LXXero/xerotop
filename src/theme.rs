@@ -315,8 +315,8 @@ pub fn themes_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("themes"))
 }
 
-/// Resolve a theme by name: `"default"`/empty → built-in; otherwise load
-/// `themes/<name>.toml`, falling back to the built-in on any error.
+/// Resolve a theme by name: `"default"`/empty → built-in; otherwise try
+/// filesystem `themes/<name>.toml` → embedded binary themes → built-in.
 pub fn resolve(name: &str) -> Theme {
     let name = if name.is_empty() { "default" } else { name };
     if !is_valid_name(name) {
