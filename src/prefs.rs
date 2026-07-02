@@ -7,7 +7,7 @@ use crate::bar::BarHandle;
 use crate::config::{
     Align, BarLength, CornerMode, Edge, HeaderButton, HeaderSlot, Layer, PanelConfig, TempSensor,
 };
-use crate::theme::{Theme, themes_dir};
+use crate::theme::{embedded_theme_names, Theme, themes_dir};
 use crate::theme_switch;
 use gtk::gdk::RGBA;
 use gtk::glib;
@@ -1096,6 +1096,12 @@ fn theme_names() -> Vec<String> {
             {
                 v.push(stem.to_string());
             }
+        }
+    }
+    // Append embedded themes that aren't already in the list (from filesystem).
+    for name in embedded_theme_names() {
+        if !v.iter().any(|x| x == name) {
+            v.push(name.to_string());
         }
     }
     v

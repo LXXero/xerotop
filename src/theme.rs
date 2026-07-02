@@ -282,6 +282,24 @@ window.xerotop {{ background-color: transparent; }}
     }
 }
 
+/// Theme files compiled into the binary so they're available even when
+/// `~/.config/xerotop/themes/` does not exist.  Filesystem themes take
+/// priority so users can override any built-in theme by saving a `.toml`
+/// with the same name in their config dir.
+const EMBEDDED_THEMES: &[(&str, &str)] = &[
+    ("breeze", include_str!("../themes/breeze.toml")),
+    ("breeze-light", include_str!("../themes/breeze-light.toml")),
+];
+
+/// Return the names of all embedded themes (["breeze", "breeze-light", …]).
+pub fn embedded_theme_names() -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = Vec::with_capacity(EMBEDDED_THEMES.len());
+    for (n, _) in EMBEDDED_THEMES {
+        v.push(n);
+    }
+    v
+}
+
 /// A theme name is a strict slug so it can't escape the themes dir (e.g. `../`).
 pub fn is_valid_name(name: &str) -> bool {
     !name.is_empty()
@@ -305,16 +323,25 @@ pub fn resolve(name: &str) -> Theme {
         eprintln!("xerotop: invalid theme name '{name}'; using default");
         return Theme::default();
     }
-    // Load themes/<name>.toml if present — including "default", so edits to the
-    // default theme persist. Missing file → the built-in default.
+    // 1. Filesystem — user override or saved theme.
     let path = themes_dir().join(format!("{name}.toml"));
-    match std::fs::read_to_string(&path) {
-        Ok(s) => toml::from_str(&s).unwrap_or_else(|e| {
-            eprintln!("xerotop: theme '{name}' parse error ({e}); using default");
-            Theme::default()
-        }),
-        Err(_) => Theme::default(),
+    if let Ok(s) = std::fs::read_to_string(&path) {
+        match toml::from_str(&s) {
+            Ok(t) => return t,
+            Err(e) => {
+                eprintln!("xerotop: theme '{name}' in themes dir parse error ({e}); trying embedded")
+            }
+        }
     }
+    // 2. Embedded in the binary.
+    if let Some((_, data)) = EMBEDDED_THEMES.iter().find(|(n, _)| *n == name) {
+        return toml::from_str(data).unwrap_or_else(|e| {
+            eprintln!("xerotop: embedded theme '{name}' parse error ({e}); using default");
+            Theme::default()
+        });
+    }
+    // 3. Built-in default.
+    Theme::default()
 }
 
 #[cfg(test)]
@@ -355,7 +382,7 @@ mod tests {
 
     #[test]
     fn css_is_scoped_and_embeds_opacity_font_sizes() {
-        let css = Theme::default().css(0.5, 0, CornerMode::Uniform, Edge::Right);
+        let css = Theme::default().css(0.5, 0, CornerMode::Uniform, Edge::Right, Align::Center, false);
         assert!(
             css.contains("window.xerotop"),
             "transparent rule must be scoped"
@@ -373,7 +400,7 @@ mod tests {
             ..Theme::default()
         };
         assert!(
-            t.css(1.0, 0, CornerMode::Uniform, Edge::Right).contains("#808080"),
+            t.css(1.0, 0, CornerMode::Uniform, Edge::Right, Align::Center, false).contains("#808080"),
             "bad color normalized to grey"
         );
     }
