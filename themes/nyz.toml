@@ -1,0 +1,18 @@
+# nyz — steel-blue + slate to match the openbox/labwc "nyz" theme (#6699CC accent).
+# Basically the built-in default leaned into nyz's signature cornflower blue.
+font_family = "FiraCode Nerd Font Mono"
+background = "#12151b"
+foreground = "#d6e2f0"
+label = "#6699cc"
+muted = "#5578aa"
+font_small = 10
+font_normal = 12
+font_large = 18
+green = "#66ff66"
+cyan = "#6699cc"
+amber = "#ffbf4d"
+red = "#ff7366"
+violet = "#c78cff"
+led_on = "#6699cc"
+graph_background = "#000000"
+graph_background_opacity = 0.25

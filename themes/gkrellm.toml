@@ -1,0 +1,18 @@
+# gkrellm — OG GKrellM vibe: charcoal chassis, phosphor-green readouts, and the
+# bright, saturated meter palette the old stack was known for.
+font_family = "FiraCode Nerd Font Mono"
+background = "#1b1b1b"
+foreground = "#d7d7cf"
+label = "#8fbf8f"
+muted = "#6a7a6a"
+font_small = 10
+font_normal = 12
+font_large = 18
+green = "#4cff4c"
+cyan = "#4cc8ff"
+amber = "#ffcc33"
+red = "#ff5544"
+violet = "#b98cff"
+led_on = "#33ff66"
+graph_background = "#0a0a0a"
+graph_background_opacity = 0.35

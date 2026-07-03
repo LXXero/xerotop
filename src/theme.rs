@@ -289,6 +289,8 @@ window.xerotop {{ background-color: transparent; }}
 const EMBEDDED_THEMES: &[(&str, &str)] = &[
     ("breeze", include_str!("../themes/breeze.toml")),
     ("breeze-light", include_str!("../themes/breeze-light.toml")),
+    ("gkrellm", include_str!("../themes/gkrellm.toml")),
+    ("nyz", include_str!("../themes/nyz.toml")),
 ];
 
 /// Return the names of all embedded themes (["breeze", "breeze-light", …]).

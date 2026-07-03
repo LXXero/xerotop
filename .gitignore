@@ -3,3 +3,4 @@
 packaging/*/src/
 packaging/*/pkg/
 packaging/*/*.pkg.tar.*
+packaging/*/xerotop/
