@@ -1,0 +1,28 @@
+font_family = "Noto Sans"
+background = "#EFF0F1"
+foreground = "#232627"
+label = "#31363b"
+muted = "#5d6f71"
+font_small = 10
+font_normal = 12
+font_large = 18
+green = "#11D116"
+cyan = "#1ABC9C"
+amber = "#F67400"
+red = "#ED1515"
+violet = "#9B59B6"
+led_on = "#1CDC9A"
+graph_background = "#000000"
+graph_background_opacity = 0.1
+
+[[header]]
+slot = "time-left"
+icon = ""
+command = "@menu"
+color = "#5fd75f"
+
+[[header]]
+slot = "time-right"
+icon = ""
+command = "loginctl lock-session"
+color = "#d4af37"
