@@ -513,6 +513,7 @@ fn general_page(handle: &BarHandle) -> GtkBox {
             return;
         };
         h.cfg.borrow_mut().theme_switch.light = name;
+        theme_switch::sync_once(&h);
     });
     page.append(&row("Light theme", &light));
 
@@ -534,6 +535,7 @@ fn general_page(handle: &BarHandle) -> GtkBox {
             return;
         };
         h.cfg.borrow_mut().theme_switch.dark = name;
+        theme_switch::sync_once(&h);
     });
     page.append(&row("Dark theme", &dark));
 
