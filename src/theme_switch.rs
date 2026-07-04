@@ -60,7 +60,7 @@ pub(crate) fn sync_once(handle: &BarHandle) {
         None::<&gtk::gio::Cancellable>,
     ) {
         // reply is (v) — extract the u32 value
-        if let Some(val) = reply.child_value(0).get::<u32>() {
+        if let Some(val) = unbox(reply.child_value(0)).get::<u32>() {
             apply(handle, val == 1);
         }
     }
@@ -93,10 +93,7 @@ fn subscribe_signals(handle: &BarHandle, conn: &gtk::gio::DBusConnection) {
             if !h.cfg.borrow().theme_switch.auto {
                 return;
             }
-            // params.child_value(2) is a variant wrapping a u32
-            let is_dark = params
-                .child_value(2)
-                .child_value(0)
+            let is_dark = unbox(params.child_value(2))
                 .get::<u32>()
                 .is_some_and(|v| v == 1);
             apply(&h, is_dark);
@@ -118,6 +115,17 @@ pub fn desktop_style() -> &'static str {
     }
 }
 
+/// Peel off variant-type (`v`) layers until we hit a concrete type.
+/// Portal backends nest the colour-scheme payload at varying depths
+/// between `Read` replies and `SettingChanged` signals, so a loop
+/// is more robust than hardcoding a fixed number of unboxes.
+fn unbox(mut v: glib::Variant) -> glib::Variant {
+    while v.is_type(glib::VariantTy::VARIANT) {
+        v = v.as_variant().expect("type was just verified");
+    }
+    v
+}
+
 /// Replicate the theme-switch logic from the prefs selector callback.
 fn apply(handle: &BarHandle, is_dark: bool) {
     let name = if is_dark {
@@ -136,4 +144,19 @@ fn apply(handle: &BarHandle, is_dark: bool) {
     *handle.theme.borrow_mut() = t;
     handle.apply();
     prefs::theme_changed();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unbox_peels_all_variant_layers() {
+        let inner = glib::Variant::from(1u32);
+        let wrapped_once = glib::Variant::from_variant(&inner);
+        let wrapped_twice = glib::Variant::from_variant(&wrapped_once);
+        assert_eq!(unbox(inner.clone()).get::<u32>(), Some(1));
+        assert_eq!(unbox(wrapped_once).get::<u32>(), Some(1));
+        assert_eq!(unbox(wrapped_twice).get::<u32>(), Some(1));
+    }
 }
