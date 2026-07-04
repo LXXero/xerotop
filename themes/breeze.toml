@@ -14,15 +14,3 @@ violet = "#9B59B6"
 led_on = "#1CDC9A"
 graph_background = "#000000"
 graph_background_opacity = 0.2
-
-[[header]]
-slot = "time-left"
-icon = ""
-command = "@menu"
-color = "#5fd75f"
-
-[[header]]
-slot = "time-right"
-icon = ""
-command = "loginctl lock-session"
-color = "#d4af37"
