@@ -2,6 +2,7 @@ use gtk::glib;
 
 use crate::bar::BarHandle;
 use crate::prefs;
+use crate::theme::Theme;
 
 /// Initialise colour-scheme listener via the D-Bus portal and apply the
 /// current scheme immediately so the bar and prefs window match from startup.
@@ -126,7 +127,36 @@ fn unbox(mut v: glib::Variant) -> glib::Variant {
     v
 }
 
-/// Replicate the theme-switch logic from the prefs selector callback.
+/// How much of the bar a theme switch has to redo.
+#[derive(Debug, PartialEq)]
+enum Refresh {
+    /// The resolved theme is already active.
+    Nothing,
+    /// Only CSS colors/fonts differ — `restyle()` keeps graph history.
+    Restyle,
+    /// Graph colors (baked into the graphs) or bundled sensor/header colors
+    /// differ — needs a full `apply()`.
+    Rebuild,
+}
+
+fn refresh_for(current_name: &str, current: &Theme, name: &str, next: &Theme) -> Refresh {
+    if name == current_name {
+        return Refresh::Nothing;
+    }
+    let same_graphs = current.green == next.green
+        && current.cyan == next.cyan
+        && current.amber == next.amber
+        && current.red == next.red
+        && current.violet == next.violet;
+    if same_graphs && next.sensors.is_none() && next.header.is_none() {
+        Refresh::Restyle
+    } else {
+        Refresh::Rebuild
+    }
+}
+
+/// Replicate the theme-switch logic from the prefs selector callback, using the
+/// lightest live-apply tier so a no-op switch doesn't reset graph history.
 fn apply(handle: &BarHandle, is_dark: bool) {
     let name = if is_dark {
         handle.cfg.borrow().theme_switch.dark.clone()
@@ -134,6 +164,10 @@ fn apply(handle: &BarHandle, is_dark: bool) {
         handle.cfg.borrow().theme_switch.light.clone()
     };
     let t = crate::theme::resolve(&name);
+    let refresh = refresh_for(&handle.cfg.borrow().theme, &handle.theme.borrow(), &name, &t);
+    if refresh == Refresh::Nothing {
+        return;
+    }
     handle.cfg.borrow_mut().theme = name;
     if let Some(s) = &t.sensors {
         handle.cfg.borrow_mut().temp.sensors = s.clone();
@@ -142,7 +176,11 @@ fn apply(handle: &BarHandle, is_dark: bool) {
         handle.cfg.borrow_mut().header = hdr.clone();
     }
     *handle.theme.borrow_mut() = t;
-    handle.apply();
+    if refresh == Refresh::Restyle {
+        handle.restyle();
+    } else {
+        handle.apply();
+    }
     prefs::theme_changed();
 }
 
@@ -158,5 +196,25 @@ mod tests {
         assert_eq!(unbox(inner.clone()).get::<u32>(), Some(1));
         assert_eq!(unbox(wrapped_once).get::<u32>(), Some(1));
         assert_eq!(unbox(wrapped_twice).get::<u32>(), Some(1));
+    }
+
+    #[test]
+    fn refresh_for_picks_lightest_tier() {
+        let cur = Theme::default();
+        // Same theme name (e.g. light dropdown changed while dark is active).
+        assert_eq!(refresh_for("nyz", &cur, "nyz", &cur), Refresh::Nothing);
+        // Different theme, only CSS colors/fonts differ.
+        let mut css_only = cur.clone();
+        css_only.background = "#123456".into();
+        css_only.font_family = "Other Font".into();
+        assert_eq!(refresh_for("a", &cur, "b", &css_only), Refresh::Restyle);
+        // Graph color differs → rebuild.
+        let mut graph = cur.clone();
+        graph.cyan = "#000000".into();
+        assert_eq!(refresh_for("a", &cur, "b", &graph), Refresh::Rebuild);
+        // Bundled header colors → rebuild.
+        let mut bundled = cur.clone();
+        bundled.header = Some(Vec::new());
+        assert_eq!(refresh_for("a", &cur, "b", &bundled), Refresh::Rebuild);
     }
 }
