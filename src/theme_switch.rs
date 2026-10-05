@@ -1,12 +1,22 @@
+use std::cell::RefCell;
+
 use gtk::glib;
 
 use crate::bar::BarHandle;
 use crate::prefs;
 
+/// How long to wait for the portal's `Read` reply before giving up.
+const READ_TIMEOUT_MS: i32 = 1000;
+
+thread_local! {
+    /// Session-bus connection opened once by `init()` and reused for every
+    /// portal call, so `sync_once` doesn't reconnect each time it runs.
+    static CONN: RefCell<Option<gtk::gio::DBusConnection>> = const { RefCell::new(None) };
+}
+
 /// Initialise colour-scheme listener via the D-Bus portal and apply the
 /// current scheme immediately so the bar and prefs window match from startup.
 pub fn init(handle: &BarHandle) {
-    sync_once(handle);
     let address = match std::env::var("DBUS_SESSION_BUS_ADDRESS") {
         Ok(a) if !a.is_empty() => a,
         _ => return,
@@ -22,33 +32,26 @@ pub fn init(handle: &BarHandle) {
         Err(_) => return,
     };
     subscribe_signals(handle, &conn);
+    CONN.with(|c| *c.borrow_mut() = Some(conn));
+    sync_once(handle);
 }
 
 /// Read the current colour-scheme via the portal and apply it.
-/// Creates a temporary D-Bus connection for the one-off call.
+/// The call is asynchronous so a slow or missing portal never blocks the
+/// GTK main thread; the reply is applied from the callback.
 pub(crate) fn sync_once(handle: &BarHandle) {
     if !handle.cfg.borrow().theme_switch.auto {
         return;
     }
-    let address = match std::env::var("DBUS_SESSION_BUS_ADDRESS") {
-        Ok(a) if !a.is_empty() => a,
-        _ => return,
-    };
-    let conn = match gtk::gio::DBusConnection::for_address_sync(
-        &address,
-        gtk::gio::DBusConnectionFlags::AUTHENTICATION_CLIENT
-            | gtk::gio::DBusConnectionFlags::MESSAGE_BUS_CONNECTION,
-        None::<&gtk::gio::DBusAuthObserver>,
-        None::<&gtk::gio::Cancellable>,
-    ) {
-        Ok(c) => c,
-        Err(_) => return,
+    let Some(conn) = CONN.with(|c| c.borrow().clone()) else {
+        return;
     };
     let params = glib::Variant::tuple_from_iter([
         glib::Variant::from("org.freedesktop.appearance"),
         glib::Variant::from("color-scheme"),
     ]);
-    if let Ok(reply) = conn.call_sync(
+    let h = handle.clone();
+    conn.call(
         Some("org.freedesktop.portal.Desktop"),
         "/org/freedesktop/portal/desktop",
         "org.freedesktop.portal.Settings",
@@ -56,14 +59,27 @@ pub(crate) fn sync_once(handle: &BarHandle) {
         Some(&params),
         None::<&glib::VariantTy>,
         gtk::gio::DBusCallFlags::NONE,
-        -1,
+        READ_TIMEOUT_MS,
         None::<&gtk::gio::Cancellable>,
-    ) {
-        // reply is (v) — extract the u32 value
-        if let Some(val) = unbox(reply.child_value(0)).get::<u32>() {
-            apply(handle, val == 1);
-        }
+        move |reply| {
+            // The setting may have been turned off while the call was pending.
+            if !h.cfg.borrow().theme_switch.auto {
+                return;
+            }
+            if let Some(is_dark) = reply.ok().as_ref().and_then(read_is_dark) {
+                apply(&h, is_dark);
+            }
+        },
+    );
+}
+
+/// Extract the colour-scheme from a `Read` reply, which is `(v)` holding a u32
+/// (1 = prefer dark).
+fn read_is_dark(reply: &glib::Variant) -> Option<bool> {
+    if reply.n_children() < 1 {
+        return None;
     }
+    unbox(reply.child_value(0)).get::<u32>().map(|v| v == 1)
 }
 
 /// Subscribe to the portal's SettingChanged signal for live updates.
@@ -158,5 +174,17 @@ mod tests {
         assert_eq!(unbox(inner.clone()).get::<u32>(), Some(1));
         assert_eq!(unbox(wrapped_once).get::<u32>(), Some(1));
         assert_eq!(unbox(wrapped_twice).get::<u32>(), Some(1));
+    }
+
+    #[test]
+    fn read_is_dark_parses_portal_reply() {
+        let reply = |v: u32| {
+            let boxed = glib::Variant::from_variant(&glib::Variant::from(v));
+            glib::Variant::tuple_from_iter([glib::Variant::from_variant(&boxed)])
+        };
+        assert_eq!(read_is_dark(&reply(1)), Some(true));
+        assert_eq!(read_is_dark(&reply(2)), Some(false));
+        assert_eq!(read_is_dark(&reply(0)), Some(false));
+        assert_eq!(read_is_dark(&glib::Variant::tuple_from_iter(Vec::<glib::Variant>::new())), None);
     }
 }
