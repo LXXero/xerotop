@@ -7,12 +7,12 @@ description = "A gkrellm-style, battery-conscious Wayland (wlroots/layer-shell) 
 repository = "https://github.com/LXXero/xerotop"
 
 [dependencies]
-alsa = "0.11.0"
+alsa = "0.12.1"
 async-channel = "2.5.0"
 calloop = "0.14.4"
 calloop-wayland-source = "0.4.1"
-gtk = { version = "0.10", package = "gtk4", features = ["v4_10"] }
-gtk4-layer-shell = "0.6"
+gtk = { version = "0.11", package = "gtk4", features = ["v4_10"] }
+gtk4-layer-shell = "0.8"
 libc = "0.2.186"
 serde = { version = "1.0.228", features = ["derive"] }
 system-tray = "0.8"
@@ -21,4 +21,4 @@ toml = "1.1.2"
 ureq = "3.3.0"
 wayland-client = "0.31.14"
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
-x11rb = { version = "0.13", default-features = false }
+x11rb = { version = "0.14", default-features = false }
