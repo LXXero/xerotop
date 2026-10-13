@@ -92,7 +92,25 @@ fn encode_location(location: &str) -> String {
         .join("+")
 }
 
-fn fetch(req: &WeatherReq) -> Option<Weather> {
+/// Upper bound on one wttr.in request, so a stalled connection can't hold the
+/// weather thread (and with it location changes) indefinitely.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(HTTP_TIMEOUT))
+        .timeout_connect(Some(HTTP_TIMEOUT))
+        .build()
+        .into()
+}
+
+/// The snapshot to show after a fetch: the new reading, or the last good one
+/// if the fetch failed, so a transient error doesn't blank the panel.
+fn keep_last_good(last: Weather, fetched: Option<Weather>) -> Weather {
+    fetched.unwrap_or(last)
+}
+
+fn fetch(agent: &ureq::Agent, req: &WeatherReq) -> Option<Weather> {
     let loc = encode_location(&req.location);
     let unit = match req.units.to_lowercase().as_str() {
         "f" => "&u",
@@ -101,7 +119,8 @@ fn fetch(req: &WeatherReq) -> Option<Weather> {
     };
     // condition | temp | location | feels-like | humidity | wind
     let url = format!("https://wttr.in/{loc}?format=%C|%t|%l|%f|%h|%w{unit}");
-    let body = ureq::get(&url)
+    let body = agent
+        .get(&url)
         .call()
         .ok()?
         .into_body()
@@ -148,12 +167,21 @@ pub fn spawn(initial: WeatherReq) -> (async_channel::Receiver<Weather>, mpsc::Se
     let (tx, rx) = async_channel::unbounded::<Weather>();
     let (req_tx, req_rx) = mpsc::channel::<WeatherReq>();
     std::thread::spawn(move || {
+        let agent = agent();
         let mut req = initial;
+        let mut last = Weather::default();
         loop {
-            let _ = tx.send_blocking(fetch(&req).unwrap_or_default());
+            last = keep_last_good(last, fetch(&agent, &req));
+            let _ = tx.send_blocking(last.clone());
             let wait = Duration::from_secs_f64(req.interval_min.max(1.0) * 60.0);
             match req_rx.recv_timeout(wait) {
-                Ok(new) => req = new,
+                Ok(new) => {
+                    // A reading for another place or unit is not a fallback.
+                    if new.location != req.location || new.units != req.units {
+                        last = Weather::default();
+                    }
+                    req = new;
+                }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
@@ -164,7 +192,27 @@ pub fn spawn(initial: WeatherReq) -> (async_channel::Receiver<Weather>, mpsc::Se
 
 #[cfg(test)]
 mod tests {
-    use super::encode_location;
+    use super::{Weather, encode_location, keep_last_good};
+
+    #[test]
+    fn failed_fetch_keeps_last_good_reading() {
+        let good = Weather {
+            temp: "+72°F".into(),
+            ok: true,
+            ..Weather::default()
+        };
+        let kept = keep_last_good(good, None);
+        assert!(kept.ok);
+        assert_eq!(kept.temp, "+72°F");
+
+        let newer = Weather {
+            temp: "+68°F".into(),
+            ok: true,
+            ..Weather::default()
+        };
+        assert_eq!(keep_last_good(kept, Some(newer)).temp, "+68°F");
+        assert!(!keep_last_good(Weather::default(), None).ok);
+    }
 
     #[test]
     fn location_spaces_become_plus() {
