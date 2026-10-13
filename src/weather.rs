@@ -2,6 +2,7 @@
 //! on a slow timer — or immediately when the config changes — and streams a
 //! parsed snapshot to GTK over a channel, mirroring the tray/taskbar pattern.
 
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -72,13 +73,27 @@ fn color_for(cond: &str) -> &'static str {
     }
 }
 
-fn fetch(req: &WeatherReq) -> Option<Weather> {
-    let loc: String = req
-        .location
+/// Everything but RFC 3986 unreserved characters gets percent-encoded, so `?`,
+/// `&`, `#`, `/` and non-ASCII can't change the request. `~` stays literal: it is
+/// wttr.in's "search for a place by name" prefix.
+const LOCATION: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+/// The location as a URL path segment; spaces become `+`, as wttr.in expects.
+fn encode_location(location: &str) -> String {
+    location
         .trim()
-        .chars()
-        .map(|c| if c == ' ' { '+' } else { c })
-        .collect();
+        .split(' ')
+        .map(|word| utf8_percent_encode(word, LOCATION).to_string())
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+fn fetch(req: &WeatherReq) -> Option<Weather> {
+    let loc = encode_location(&req.location);
     let unit = match req.units.to_lowercase().as_str() {
         "f" => "&u",
         "c" => "&m",
@@ -145,4 +160,28 @@ pub fn spawn(initial: WeatherReq) -> (async_channel::Receiver<Weather>, mpsc::Se
         }
     });
     (rx, req_tx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_location;
+
+    #[test]
+    fn location_spaces_become_plus() {
+        assert_eq!(encode_location("  New York "), "New+York");
+        assert_eq!(encode_location(""), "");
+    }
+
+    #[test]
+    fn location_special_characters_are_percent_encoded() {
+        assert_eq!(encode_location("a?b&c#d/e"), "a%3Fb%26c%23d%2Fe");
+        assert_eq!(encode_location("+"), "%2B");
+        assert_eq!(encode_location("Zürich"), "Z%C3%BCrich");
+        assert_eq!(encode_location("São Paulo"), "S%C3%A3o+Paulo");
+    }
+
+    #[test]
+    fn location_search_prefix_stays_literal() {
+        assert_eq!(encode_location("~Eiffel Tower"), "~Eiffel+Tower");
+    }
 }
